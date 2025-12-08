@@ -1097,6 +1097,72 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": ["edits"]
             }
+        ),
+        types.Tool(
+            name="fusion_highlight_geometry",
+            description="Highlight specific geometry elements in the viewport by adding them to the selection. Useful for debugging and visualization.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "paths": {
+                        "type": "array",
+                        "description": "Array of element paths to highlight. Paths from fusion_get_tree, fusion_get_edge_info, etc. Can also be a single path string.",
+                        "items": {
+                            "type": "string"
+                        }
+                    },
+                    "clear_selection": {
+                        "type": "boolean",
+                        "description": "Whether to clear existing selection before highlighting (default: true)",
+                        "default": True
+                    }
+                },
+                "required": ["paths"]
+            }
+        ),
+        types.Tool(
+            name="fusion_measure_all_angles",
+            description="Measure all angles between edges or faces in a body. Returns array of angle measurements with optional filtering by angle range.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "body_path": {
+                        "type": "string",
+                        "description": "Path to body. Format: 'root/bRepBodies/BodyName'"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "description": "Measurement mode: 'edges' for angles between connected edges, 'faces' for angles between adjacent faces",
+                        "enum": ["edges", "faces"],
+                        "default": "edges"
+                    },
+                    "min_angle": {
+                        "type": "number",
+                        "description": "Minimum angle to include in results (degrees, default: 0)",
+                        "default": 0
+                    },
+                    "max_angle": {
+                        "type": "number",
+                        "description": "Maximum angle to include in results (degrees, default: 180)",
+                        "default": 180
+                    }
+                },
+                "required": ["body_path"]
+            }
+        ),
+        types.Tool(
+            name="fusion_get_edge_relationships",
+            description="Get topology relationships for a specific edge: connected edges at vertices, adjacent faces, curve type, and geometric properties.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "edge_path": {
+                        "type": "string",
+                        "description": "Path to edge. Format: 'root/bRepBodies/BodyName/edges/INDEX'"
+                    }
+                },
+                "required": ["edge_path"]
+            }
         )
     ]
 
@@ -1137,7 +1203,10 @@ async def handle_call_tool(
         'fusion_sketch_add_dimension': 'sketch_add_dimension',
         'fusion_get_features': 'get_features',
         'fusion_suppress_feature': 'suppress_feature',
-        'fusion_edit_feature': 'edit_feature'
+        'fusion_edit_feature': 'edit_feature',
+        'fusion_highlight_geometry': 'highlight_geometry',
+        'fusion_measure_all_angles': 'measure_all_angles',
+        'fusion_get_edge_relationships': 'get_edge_relationships'
     }
 
     if name not in operation_map:
@@ -1209,7 +1278,7 @@ async def main():
             write_stream,
             InitializationOptions(
                 server_name="fusion360-mcp",
-                server_version="0.11.0",
+                server_version="0.12.4",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},

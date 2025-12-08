@@ -6,7 +6,8 @@ import queue
 import time
 import base64
 import tempfile
-import os 
+import os
+import math 
 
 # Queue for operations that need main thread
 _operation_queue = queue.Queue()
@@ -2718,6 +2719,379 @@ def _handle_get_tree(params):
         'data': tree
     }
 
+def _handle_highlight_geometry(params):
+    """Highlight specific geometry elements in the viewport"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+    ui = app.userInterface
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    try:
+        # Get paths to highlight
+        paths = params.get('paths', [])
+        if isinstance(paths, str):
+            paths = [paths]
+
+        clear_selection = params.get('clear_selection', True)
+
+        # Clear existing selection if requested
+        if clear_selection:
+            ui.activeSelections.clear()
+
+        highlighted_elements = []
+
+        # Add each element to selection
+        for path in paths:
+            try:
+                element, element_type = _resolve_element_path(path)
+
+                # Add to selection to highlight
+                ui.activeSelections.add(element)
+
+                highlighted_elements.append({
+                    'path': path,
+                    'type': element_type,
+                    'name': element.name if hasattr(element, 'name') else 'Unnamed'
+                })
+            except Exception as e:
+                highlighted_elements.append({
+                    'path': path,
+                    'error': str(e)
+                })
+
+        return {
+            'status': 'success',
+            'data': {
+                'highlighted_count': len([h for h in highlighted_elements if 'error' not in h]),
+                'elements': highlighted_elements
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to highlight geometry: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_measure_all_angles(params):
+    """Measure all angles between edges or faces in a body"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    try:
+        body_path = params.get('body_path')
+        mode = params.get('mode', 'edges')  # 'edges' or 'faces'
+        min_angle = params.get('min_angle', 0)  # in degrees
+        max_angle = params.get('max_angle', 180)  # in degrees
+
+        body, _ = _resolve_element_path(body_path)
+
+        if not hasattr(body, 'edges') or not hasattr(body, 'faces'):
+            return {'status': 'error', 'message': 'Element is not a body'}
+
+        angles = []
+
+        if mode == 'edges':
+            # Measure angles between connected edges
+            # Track edge pairs to avoid duplicates
+            measured_pairs = set()
+
+            for i in range(body.edges.count):
+                edge1 = body.edges.item(i)
+
+                # Find connected edges through vertices
+                for vertex in [edge1.startVertex, edge1.endVertex]:
+                    # Get all edges at this vertex that belong to the same body
+                    for j in range(body.edges.count):
+                        if i == j:
+                            continue
+
+                        edge2 = body.edges.item(j)
+
+                        # Check if edge2 is connected to this vertex
+                        if edge2.startVertex != vertex and edge2.endVertex != vertex:
+                            continue
+
+                        # Skip if we already measured this pair (order-independent)
+                        pair_key = tuple(sorted([i, j]))
+                        if pair_key in measured_pairs:
+                            continue
+                        measured_pairs.add(pair_key)
+
+                        # Get tangent vectors at the vertex point for both edges
+                        try:
+                            # Get curve evaluators
+                            eval1 = edge1.evaluator
+                            eval2 = edge2.evaluator
+
+                            # Get parameter at vertex point
+                            result1, param1 = eval1.getParameterAtPoint(vertex.geometry)
+                            result2, param2 = eval2.getParameterAtPoint(vertex.geometry)
+
+                            if result1 and result2:
+                                # Get tangent vectors at vertex
+                                result1, tangent1 = eval1.getTangent(param1)
+                                result2, tangent2 = eval2.getTangent(param2)
+
+                                if result1 and result2:
+                                    # Calculate angle between tangents
+                                    dot_product = tangent1.dotProduct(tangent2)
+                                    # Clamp to [-1, 1] to avoid math domain errors
+                                    dot_product = max(-1.0, min(1.0, dot_product))
+                                    angle_rad = math.acos(abs(dot_product))
+                                    angle_deg = math.degrees(angle_rad)
+
+                                    if min_angle <= angle_deg <= max_angle:
+                                        angles.append({
+                                            'edge1_index': i,
+                                            'edge2_index': j,
+                                            'angle_degrees': round(angle_deg, 2),
+                                            'angle_radians': round(angle_rad, 4),
+                                            'vertex': {
+                                                'x': vertex.geometry.x,
+                                                'y': vertex.geometry.y,
+                                                'z': vertex.geometry.z
+                                            }
+                                        })
+                        except Exception as e:
+                            # Skip edges that fail tangent calculation
+                            pass
+
+        elif mode == 'faces':
+            # Measure angles between adjacent faces
+            for i in range(body.faces.count):
+                face1 = body.faces.item(i)
+
+                # Find adjacent faces through shared edges
+                for edge in face1.edges:
+                    for face2 in edge.faces:
+                        if face2 == face1:
+                            continue
+
+                        # Find face2 index manually (BRepFaces doesn't have .index() method)
+                        face2_index = -1
+                        for j in range(body.faces.count):
+                            if body.faces.item(j) == face2:
+                                face2_index = j
+                                break
+
+                        if face2_index == -1:
+                            continue
+
+                        # Skip if we already measured this pair
+                        already_measured = any(
+                            a.get('face1_index') == face2_index and a.get('face2_index') == i
+                            for a in angles
+                        )
+                        if already_measured:
+                            continue
+
+                        # Get face normals
+                        if hasattr(face1.geometry, 'normal') and hasattr(face2.geometry, 'normal'):
+                            evaluator1 = face1.evaluator
+                            evaluator2 = face2.evaluator
+
+                            # Get normals at face centers
+                            result1, params1 = evaluator1.getParameterAtPoint(face1.pointOnFace)
+                            result2, params2 = evaluator2.getParameterAtPoint(face2.pointOnFace)
+
+                            if result1 and result2:
+                                # params1/params2 are Point2D objects - pass them directly
+                                result1, normal1 = evaluator1.getNormalAtParameter(params1)
+                                result2, normal2 = evaluator2.getNormalAtParameter(params2)
+
+                                if result1 and result2:
+                                    # Calculate angle between normals
+                                    dot_product = normal1.dotProduct(normal2)
+                                    dot_product = max(-1.0, min(1.0, dot_product))
+                                    angle_rad = math.acos(abs(dot_product))
+                                    angle_deg = math.degrees(angle_rad)
+
+                                    if min_angle <= angle_deg <= max_angle:
+                                        angles.append({
+                                            'face1_index': i,
+                                            'face2_index': face2_index,
+                                            'angle_degrees': round(angle_deg, 2),
+                                            'angle_radians': round(angle_rad, 4)
+                                        })
+
+        return {
+            'status': 'success',
+            'data': {
+                'body_path': body_path,
+                'mode': mode,
+                'angle_count': len(angles),
+                'angles': angles
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to measure angles: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_get_edge_relationships(params):
+    """Get topology relationships for a specific edge"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    try:
+        edge_path = params.get('edge_path')
+
+        # Parse edge path manually (e.g., 'root/bRepBodies/Body1/edges/4')
+        # _resolve_element_path doesn't handle /edges/INDEX, so we parse it ourselves
+        if '/edges/' not in edge_path:
+            return {'status': 'error', 'message': 'Invalid edge path - must contain /edges/INDEX'}
+
+        parts = edge_path.split('/edges/')
+        if len(parts) != 2:
+            return {'status': 'error', 'message': 'Invalid edge path format'}
+
+        body_path = parts[0]
+        try:
+            edge_index = int(parts[1])
+        except ValueError:
+            return {'status': 'error', 'message': 'Edge index must be an integer'}
+
+        # Get the body
+        body, body_type = _resolve_element_path(body_path)
+
+        if body_type != 'BRepBody':
+            return {'status': 'error', 'message': f'Path does not point to a BRepBody (got {body_type})'}
+
+        # Get the edge from the body
+        if edge_index < 0 or edge_index >= body.edges.count:
+            return {'status': 'error', 'message': f'Edge index {edge_index} out of range (body has {body.edges.count} edges)'}
+
+        edge = body.edges.item(edge_index)
+
+        # Get edge geometry info
+        edge_info = {
+            'path': edge_path,
+            'length': edge.length,
+            'start_vertex': {
+                'x': edge.startVertex.geometry.x,
+                'y': edge.startVertex.geometry.y,
+                'z': edge.startVertex.geometry.z
+            },
+            'end_vertex': {
+                'x': edge.endVertex.geometry.x,
+                'y': edge.endVertex.geometry.y,
+                'z': edge.endVertex.geometry.z
+            }
+        }
+
+        # Get curve type
+        geom = edge.geometry
+        if isinstance(geom, adsk.core.Line3D):
+            edge_info['curve_type'] = 'line'
+            # Line3D doesn't have .direction, compute from start/end points
+            start = geom.startPoint
+            end = geom.endPoint
+            dir_vec = adsk.core.Vector3D.create(
+                end.x - start.x,
+                end.y - start.y,
+                end.z - start.z
+            )
+            dir_vec.normalize()
+            edge_info['direction'] = {
+                'x': dir_vec.x,
+                'y': dir_vec.y,
+                'z': dir_vec.z
+            }
+        elif isinstance(geom, adsk.core.Arc3D):
+            edge_info['curve_type'] = 'arc'
+            edge_info['radius'] = geom.radius
+        elif isinstance(geom, adsk.core.Circle3D):
+            edge_info['curve_type'] = 'circle'
+            edge_info['radius'] = geom.radius
+        else:
+            edge_info['curve_type'] = type(geom).__name__
+
+        # Get connected edges through vertices
+        connected_edges_start = []
+        connected_edges_end = []
+
+        # Get edges connected at start vertex
+        for connected_edge in edge.startVertex.edges:
+            if connected_edge != edge:
+                # Find edge index manually (BRepEdges doesn't have .index() method)
+                idx = -1
+                for j in range(body.edges.count):
+                    if body.edges.item(j) == connected_edge:
+                        idx = j
+                        break
+
+                if idx != -1:
+                    connected_edges_start.append({
+                        'index': idx,
+                        'path': f'{body_path}/edges/{idx}',
+                        'length': connected_edge.length
+                    })
+
+        # Get edges connected at end vertex
+        for connected_edge in edge.endVertex.edges:
+            if connected_edge != edge:
+                # Find edge index manually (BRepEdges doesn't have .index() method)
+                idx = -1
+                for j in range(body.edges.count):
+                    if body.edges.item(j) == connected_edge:
+                        idx = j
+                        break
+
+                if idx != -1:
+                    connected_edges_end.append({
+                        'index': idx,
+                        'path': f'{body_path}/edges/{idx}',
+                        'length': connected_edge.length
+                    })
+
+        edge_info['connected_at_start'] = connected_edges_start
+        edge_info['connected_at_end'] = connected_edges_end
+
+        # Get adjacent faces
+        adjacent_faces = []
+        for face in edge.faces:
+            # Find face index manually (BRepFaces doesn't have .index() method)
+            face_idx = -1
+            for j in range(body.faces.count):
+                if body.faces.item(j) == face:
+                    face_idx = j
+                    break
+
+            if face_idx != -1:
+                adjacent_faces.append({
+                    'index': face_idx,
+                    'path': f'{body_path}/faces/{face_idx}',
+                    'area': face.area
+                })
+
+        edge_info['adjacent_faces'] = adjacent_faces
+        edge_info['face_count'] = len(adjacent_faces)
+
+        return {
+            'status': 'success',
+            'data': edge_info
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to get edge relationships: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
 class MainThreadExecutor(adsk.core.CustomEventHandler):
     """Executes operations on Fusion's main thread"""
     def notify(self, args):
@@ -2806,6 +3180,12 @@ class MainThreadExecutor(adsk.core.CustomEventHandler):
                 result = _handle_suppress_feature(event_args.get('params', {}))
             elif operation == 'edit_feature':
                 result = _handle_edit_feature(event_args.get('params', {}))
+            elif operation == 'highlight_geometry':
+                result = _handle_highlight_geometry(event_args.get('params', {}))
+            elif operation == 'measure_all_angles':
+                result = _handle_measure_all_angles(event_args.get('params', {}))
+            elif operation == 'get_edge_relationships':
+                result = _handle_get_edge_relationships(event_args.get('params', {}))
             else:
                 result = {'status': 'error', 'error': f'Unknown operation: {operation}'}
 
@@ -2898,7 +3278,12 @@ def run(context):
         _server_thread.start()
         
         ui.messageBox(
-            'Fusion Script Executor v5.7.0\n\n'
+            'Fusion Script Executor v5.8.4\n\n'
+            'FIXED v5.8.4: Added missing math import for measure_all_angles\n'
+            'FIXED v5.8.3: measure_all_angles edge mode - restructured edge pair finding logic\n'
+            'FIXED v5.8.2: get_edge_relationships Line3D direction, measure_all_angles Point2D/tangent API fixes\n'
+            'FIXED v5.8.1: measure_all_angles and get_edge_relationships - fixed .index() errors and path parsing\n'
+            'NEW v5.8.0: Visualization/Helper tools - highlight geometry, measure all angles, edge relationships\n'
             'NEW v5.7.0: Feature/Timeline tools - get features, suppress features, edit feature parameters\n'
             'NEW v5.6.0: Sketch constraints and dimensions - geometric constraints, parametric dimensions\n'
             'NEW v5.5.2: Added point tool to sketch tools\n'
