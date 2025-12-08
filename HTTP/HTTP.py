@@ -1215,6 +1215,870 @@ def _handle_mirror_body(params):
             'traceback': traceback.format_exc()
         }
 
+def _find_body_path(body, root):
+    """Helper to find the path to a body in the design tree"""
+    # Check root bodies
+    for i in range(root.bRepBodies.count):
+        if root.bRepBodies.item(i) == body:
+            return f"root/bRepBodies/{body.name}"
+
+    # Check occurrence bodies
+    for occ in root.allOccurrences:
+        for i in range(occ.bRepBodies.count):
+            if occ.bRepBodies.item(i) == body:
+                return f"root/occurrences/{occ.name}/bRepBodies/{body.name}"
+
+    return f"root/bRepBodies/{body.name}"  # Fallback
+
+def _handle_split_body(params):
+    """Split a body using a plane or face as the splitting tool"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get body to split
+        body, _ = _resolve_element_path(params['body_path'])
+
+        # Get split tool (can be plane or face)
+        split_tool_path = params['split_tool']
+        split_tool = None
+
+        # Check for built-in plane shortcuts FIRST
+        if split_tool_path == 'XY':
+            split_tool = root.xYConstructionPlane
+        elif split_tool_path == 'XZ':
+            split_tool = root.xZConstructionPlane
+        elif split_tool_path == 'YZ':
+            split_tool = root.yZConstructionPlane
+        # Check for custom construction planes
+        elif split_tool_path.startswith('root/constructionPlanes/'):
+            plane_name = split_tool_path.split('/')[-1]
+            for p in root.constructionPlanes:
+                if p.name == plane_name:
+                    split_tool = p
+                    break
+            if split_tool is None:
+                raise ValueError(f'Construction plane "{plane_name}" not found')
+        # Check for face path (edges/faces geometry)
+        elif '/faces/' in split_tool_path:
+            split_tool, _ = _resolve_geometry_path(split_tool_path)
+        else:
+            # Try general element resolution as fallback
+            split_tool, _ = _resolve_element_path(split_tool_path)
+
+        if split_tool is None:
+            return {
+                'status': 'error',
+                'message': f'Could not resolve split tool: {split_tool_path}'
+            }
+
+        # Create split body feature (always keeps both halves)
+        split_features = root.features.splitBodyFeatures
+        split_input = split_features.createInput(body, split_tool, True)
+        split_feature = split_features.add(split_input)
+
+        # Get resulting bodies
+        resulting_bodies = []
+        for result_body in split_feature.bodies:
+            resulting_bodies.append({
+                'name': result_body.name,
+                'path': _find_body_path(result_body, root),
+                'volume': result_body.volume,
+                'area': result_body.area
+            })
+
+        return {
+            'status': 'success',
+            'data': {
+                'original_body': params['body_path'],
+                'split_tool': split_tool_path,
+                'feature_name': split_feature.name,
+                'resulting_bodies': resulting_bodies
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to split body: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_boolean_operation(params):
+    """Perform boolean operation (join, cut, intersect) on bodies"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get target body (the body being operated on)
+        target_body, _ = _resolve_element_path(params['target_body'])
+
+        # Get tool body (the body used for the operation)
+        tool_body, _ = _resolve_element_path(params['tool_body'])
+
+        # Get operation type
+        operation = params['operation'].lower()
+        operation_map = {
+            'join': adsk.fusion.FeatureOperations.JoinFeatureOperation,
+            'cut': adsk.fusion.FeatureOperations.CutFeatureOperation,
+            'intersect': adsk.fusion.FeatureOperations.IntersectFeatureOperation
+        }
+
+        if operation not in operation_map:
+            return {
+                'status': 'error',
+                'message': f'Invalid operation: {operation}. Must be one of: join, cut, intersect'
+            }
+
+        feature_operation = operation_map[operation]
+
+        # Get keep_tool parameter (default False - tool body is consumed)
+        keep_tool = params.get('keep_tool', False)
+
+        # Create combine feature
+        combine_features = root.features.combineFeatures
+
+        # Create object collection for tool bodies
+        tool_bodies = adsk.core.ObjectCollection.create()
+        tool_bodies.add(tool_body)
+
+        # Create combine input
+        combine_input = combine_features.createInput(target_body, tool_bodies)
+        combine_input.operation = feature_operation
+        combine_input.isKeepToolBodies = keep_tool
+
+        # Execute combine
+        combine_feature = combine_features.add(combine_input)
+
+        # Get resulting body (for join/intersect, it's the modified target; for cut, target is modified)
+        result_body = target_body  # The target body is modified in place
+
+        return {
+            'status': 'success',
+            'data': {
+                'target_body': params['target_body'],
+                'tool_body': params['tool_body'],
+                'operation': operation,
+                'keep_tool': keep_tool,
+                'feature_name': combine_feature.name,
+                'result_body': {
+                    'name': result_body.name,
+                    'path': _find_body_path(result_body, root),
+                    'volume': result_body.volume,
+                    'area': result_body.area
+                }
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to perform boolean operation: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_create_sketch(params):
+    """Create a new sketch on a plane"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get the plane to sketch on
+        plane_path = params['plane']
+        name = params.get('name', 'Sketch')
+
+        # Resolve plane - support XY/XZ/YZ shortcuts
+        if plane_path == 'XY':
+            plane = root.xYConstructionPlane
+        elif plane_path == 'XZ':
+            plane = root.xZConstructionPlane
+        elif plane_path == 'YZ':
+            plane = root.yZConstructionPlane
+        elif plane_path.startswith('root/constructionPlanes/'):
+            plane_name = plane_path.split('/')[-1]
+            plane = None
+            for p in root.constructionPlanes:
+                if p.name == plane_name:
+                    plane = p
+                    break
+            if plane is None:
+                raise ValueError(f'Construction plane "{plane_name}" not found')
+        else:
+            plane, _ = _resolve_element_path(plane_path)
+
+        # Create sketch
+        sketch = root.sketches.add(plane)
+        sketch.name = name
+
+        return {
+            'status': 'success',
+            'data': {
+                'sketch_path': f'root/sketches/{sketch.name}',
+                'name': sketch.name,
+                'plane': plane_path
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to create sketch: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_sketch_add_line(params):
+    """Add a line to a sketch"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get sketch
+        sketch_path = params['sketch_path']
+        sketch_name = sketch_path.split('/')[-1]
+
+        sketch = None
+        for s in root.sketches:
+            if s.name == sketch_name:
+                sketch = s
+                break
+
+        if sketch is None:
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+
+        # Get points
+        p1_data = params['point1']
+        p2_data = params['point2']
+
+        # Create points in sketch coordinates
+        p1 = adsk.core.Point3D.create(p1_data['x'], p1_data['y'], p1_data.get('z', 0))
+        p2 = adsk.core.Point3D.create(p2_data['x'], p2_data['y'], p2_data.get('z', 0))
+
+        # Add line
+        line = sketch.sketchCurves.sketchLines.addByTwoPoints(p1, p2)
+
+        return {
+            'status': 'success',
+            'data': {
+                'sketch': sketch_name,
+                'element_type': 'line',
+                'start_point': {'x': line.startSketchPoint.geometry.x, 'y': line.startSketchPoint.geometry.y},
+                'end_point': {'x': line.endSketchPoint.geometry.x, 'y': line.endSketchPoint.geometry.y},
+                'length': line.length
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to add line: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_sketch_add_circle(params):
+    """Add a circle to a sketch"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get sketch
+        sketch_path = params['sketch_path']
+        sketch_name = sketch_path.split('/')[-1]
+
+        sketch = None
+        for s in root.sketches:
+            if s.name == sketch_name:
+                sketch = s
+                break
+
+        if sketch is None:
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+
+        mode = params.get('mode', 'center_radius')
+
+        if mode == 'center_radius':
+            # Circle by center point and radius
+            center_data = params['center']
+            radius = params['radius']
+
+            center = adsk.core.Point3D.create(center_data['x'], center_data['y'], center_data.get('z', 0))
+
+            circle = sketch.sketchCurves.sketchCircles.addByCenterRadius(center, radius)
+
+            return {
+                'status': 'success',
+                'data': {
+                    'sketch': sketch_name,
+                    'element_type': 'circle',
+                    'center': {'x': circle.centerSketchPoint.geometry.x, 'y': circle.centerSketchPoint.geometry.y},
+                    'radius': circle.radius
+                }
+            }
+
+        elif mode == 'three_points':
+            # Circle through three points
+            p1_data = params['point1']
+            p2_data = params['point2']
+            p3_data = params['point3']
+
+            p1 = adsk.core.Point3D.create(p1_data['x'], p1_data['y'], p1_data.get('z', 0))
+            p2 = adsk.core.Point3D.create(p2_data['x'], p2_data['y'], p2_data.get('z', 0))
+            p3 = adsk.core.Point3D.create(p3_data['x'], p3_data['y'], p3_data.get('z', 0))
+
+            circle = sketch.sketchCurves.sketchCircles.addByThreePoints(p1, p2, p3)
+
+            return {
+                'status': 'success',
+                'data': {
+                    'sketch': sketch_name,
+                    'element_type': 'circle',
+                    'center': {'x': circle.centerSketchPoint.geometry.x, 'y': circle.centerSketchPoint.geometry.y},
+                    'radius': circle.radius
+                }
+            }
+
+        else:
+            return {'status': 'error', 'message': f'Unknown circle mode: {mode}'}
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to add circle: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_sketch_add_arc(params):
+    """Add an arc to a sketch"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get sketch
+        sketch_path = params['sketch_path']
+        sketch_name = sketch_path.split('/')[-1]
+
+        sketch = None
+        for s in root.sketches:
+            if s.name == sketch_name:
+                sketch = s
+                break
+
+        if sketch is None:
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+
+        mode = params.get('mode', 'three_points')
+
+        if mode == 'three_points':
+            # Arc through three points
+            p1_data = params['point1']
+            p2_data = params['point2']
+            p3_data = params['point3']
+
+            p1 = adsk.core.Point3D.create(p1_data['x'], p1_data['y'], p1_data.get('z', 0))
+            p2 = adsk.core.Point3D.create(p2_data['x'], p2_data['y'], p2_data.get('z', 0))
+            p3 = adsk.core.Point3D.create(p3_data['x'], p3_data['y'], p3_data.get('z', 0))
+
+            arc = sketch.sketchCurves.sketchArcs.addByThreePoints(p1, p2, p3)
+
+            return {
+                'status': 'success',
+                'data': {
+                    'sketch': sketch_name,
+                    'element_type': 'arc',
+                    'center': {'x': arc.centerSketchPoint.geometry.x, 'y': arc.centerSketchPoint.geometry.y},
+                    'start_point': {'x': arc.startSketchPoint.geometry.x, 'y': arc.startSketchPoint.geometry.y},
+                    'end_point': {'x': arc.endSketchPoint.geometry.x, 'y': arc.endSketchPoint.geometry.y},
+                    'radius': arc.radius,
+                    'length': arc.length
+                }
+            }
+
+        elif mode == 'center_start_end':
+            # Arc by center, start point, and sweep angle
+            center_data = params['center']
+            start_data = params['start']
+            sweep_angle = params['sweep_angle']  # in degrees
+
+            import math
+            center = adsk.core.Point3D.create(center_data['x'], center_data['y'], center_data.get('z', 0))
+            start = adsk.core.Point3D.create(start_data['x'], start_data['y'], start_data.get('z', 0))
+
+            arc = sketch.sketchCurves.sketchArcs.addByCenterStartSweep(center, start, math.radians(sweep_angle))
+
+            return {
+                'status': 'success',
+                'data': {
+                    'sketch': sketch_name,
+                    'element_type': 'arc',
+                    'center': {'x': arc.centerSketchPoint.geometry.x, 'y': arc.centerSketchPoint.geometry.y},
+                    'start_point': {'x': arc.startSketchPoint.geometry.x, 'y': arc.startSketchPoint.geometry.y},
+                    'end_point': {'x': arc.endSketchPoint.geometry.x, 'y': arc.endSketchPoint.geometry.y},
+                    'radius': arc.radius,
+                    'length': arc.length,
+                    'sweep_angle': sweep_angle
+                }
+            }
+
+        else:
+            return {'status': 'error', 'message': f'Unknown arc mode: {mode}'}
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to add arc: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_sketch_add_rectangle(params):
+    """Add a rectangle to a sketch"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get sketch
+        sketch_path = params['sketch_path']
+        sketch_name = sketch_path.split('/')[-1]
+
+        sketch = None
+        for s in root.sketches:
+            if s.name == sketch_name:
+                sketch = s
+                break
+
+        if sketch is None:
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+
+        mode = params.get('mode', 'two_points')
+
+        if mode == 'two_points':
+            # Rectangle by two corner points
+            p1_data = params['point1']
+            p2_data = params['point2']
+
+            p1 = adsk.core.Point3D.create(p1_data['x'], p1_data['y'], p1_data.get('z', 0))
+            p2 = adsk.core.Point3D.create(p2_data['x'], p2_data['y'], p2_data.get('z', 0))
+
+            lines = sketch.sketchCurves.sketchLines.addTwoPointRectangle(p1, p2)
+
+            # Get the 4 lines of the rectangle
+            line_info = []
+            for line in lines:
+                line_info.append({
+                    'start': {'x': line.startSketchPoint.geometry.x, 'y': line.startSketchPoint.geometry.y},
+                    'end': {'x': line.endSketchPoint.geometry.x, 'y': line.endSketchPoint.geometry.y}
+                })
+
+            return {
+                'status': 'success',
+                'data': {
+                    'sketch': sketch_name,
+                    'element_type': 'rectangle',
+                    'corner1': p1_data,
+                    'corner2': p2_data,
+                    'lines': line_info,
+                    'line_count': lines.count
+                }
+            }
+
+        elif mode == 'center_point':
+            # Rectangle by center point and corner point
+            center_data = params['center']
+            corner_data = params['corner']
+
+            center = adsk.core.Point3D.create(center_data['x'], center_data['y'], center_data.get('z', 0))
+            corner = adsk.core.Point3D.create(corner_data['x'], corner_data['y'], corner_data.get('z', 0))
+
+            lines = sketch.sketchCurves.sketchLines.addCenterPointRectangle(center, corner)
+
+            # Get the 4 lines of the rectangle
+            line_info = []
+            for line in lines:
+                line_info.append({
+                    'start': {'x': line.startSketchPoint.geometry.x, 'y': line.startSketchPoint.geometry.y},
+                    'end': {'x': line.endSketchPoint.geometry.x, 'y': line.endSketchPoint.geometry.y}
+                })
+
+            return {
+                'status': 'success',
+                'data': {
+                    'sketch': sketch_name,
+                    'element_type': 'rectangle',
+                    'center': center_data,
+                    'corner': corner_data,
+                    'lines': line_info,
+                    'line_count': lines.count
+                }
+            }
+
+        else:
+            return {'status': 'error', 'message': f'Unknown rectangle mode: {mode}'}
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to add rectangle: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_sketch_add_point(params):
+    """Add a point to a sketch"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get sketch
+        sketch_path = params['sketch_path']
+        sketch_name = sketch_path.split('/')[-1]
+
+        sketch = None
+        for s in root.sketches:
+            if s.name == sketch_name:
+                sketch = s
+                break
+
+        if sketch is None:
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+
+        # Get point coordinates
+        x = params['x']
+        y = params['y']
+        z = params.get('z', 0)
+
+        # Create point
+        point = adsk.core.Point3D.create(x, y, z)
+        sketch_point = sketch.sketchPoints.add(point)
+
+        return {
+            'status': 'success',
+            'data': {
+                'sketch': sketch_name,
+                'element_type': 'point',
+                'coordinates': {
+                    'x': sketch_point.geometry.x,
+                    'y': sketch_point.geometry.y,
+                    'z': sketch_point.geometry.z
+                }
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to add point: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_sketch_add_constraint(params):
+    """Add a geometric constraint to a sketch"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get sketch
+        sketch_path = params['sketch_path']
+        sketch_name = sketch_path.split('/')[-1]
+
+        sketch = None
+        for s in root.sketches:
+            if s.name == sketch_name:
+                sketch = s
+                break
+
+        if sketch is None:
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+
+        constraint_type = params['constraint_type']
+
+        # Helper function to get sketch entity by index
+        def get_sketch_entity(entity_index, entity_type):
+            if entity_type == 'line':
+                if entity_index < sketch.sketchCurves.sketchLines.count:
+                    return sketch.sketchCurves.sketchLines.item(entity_index)
+            elif entity_type == 'circle':
+                if entity_index < sketch.sketchCurves.sketchCircles.count:
+                    return sketch.sketchCurves.sketchCircles.item(entity_index)
+            elif entity_type == 'arc':
+                if entity_index < sketch.sketchCurves.sketchArcs.count:
+                    return sketch.sketchCurves.sketchArcs.item(entity_index)
+            elif entity_type == 'point':
+                if entity_index < sketch.sketchPoints.count:
+                    return sketch.sketchPoints.item(entity_index)
+            return None
+
+        constraints = sketch.geometricConstraints
+        constraint = None
+
+        # Apply constraint based on type
+        if constraint_type == 'horizontal':
+            entity = get_sketch_entity(params['entity_index'], params.get('entity_type', 'line'))
+            if entity:
+                constraint = constraints.addHorizontal(entity)
+
+        elif constraint_type == 'vertical':
+            entity = get_sketch_entity(params['entity_index'], params.get('entity_type', 'line'))
+            if entity:
+                constraint = constraints.addVertical(entity)
+
+        elif constraint_type == 'parallel':
+            entity1 = get_sketch_entity(params['entity1_index'], params.get('entity1_type', 'line'))
+            entity2 = get_sketch_entity(params['entity2_index'], params.get('entity2_type', 'line'))
+            if entity1 and entity2:
+                constraint = constraints.addParallel(entity1, entity2)
+
+        elif constraint_type == 'perpendicular':
+            entity1 = get_sketch_entity(params['entity1_index'], params.get('entity1_type', 'line'))
+            entity2 = get_sketch_entity(params['entity2_index'], params.get('entity2_type', 'line'))
+            if entity1 and entity2:
+                constraint = constraints.addPerpendicular(entity1, entity2)
+
+        elif constraint_type == 'tangent':
+            entity1 = get_sketch_entity(params['entity1_index'], params['entity1_type'])
+            entity2 = get_sketch_entity(params['entity2_index'], params['entity2_type'])
+            if entity1 and entity2:
+                constraint = constraints.addTangent(entity1, entity2)
+
+        elif constraint_type == 'coincident':
+            point1 = get_sketch_entity(params['point1_index'], 'point')
+            # Support both point-to-point and point-to-curve coincident
+            if 'point2_index' in params:
+                # Point-to-point coincident
+                point2 = get_sketch_entity(params['point2_index'], 'point')
+                if point1 and point2:
+                    constraint = constraints.addCoincident(point1, point2)
+            elif 'entity2_index' in params:
+                # Point-to-curve coincident
+                entity2 = get_sketch_entity(params['entity2_index'], params['entity2_type'])
+                if point1 and entity2:
+                    constraint = constraints.addCoincident(point1, entity2)
+
+        elif constraint_type == 'concentric':
+            entity1 = get_sketch_entity(params['entity1_index'], params['entity1_type'])
+            entity2 = get_sketch_entity(params['entity2_index'], params['entity2_type'])
+            if entity1 and entity2:
+                constraint = constraints.addConcentric(entity1, entity2)
+
+        elif constraint_type == 'midpoint':
+            point = get_sketch_entity(params['point_index'], 'point')
+            line = get_sketch_entity(params['line_index'], 'line')
+            if point and line:
+                constraint = constraints.addMidPoint(point, line)
+
+        elif constraint_type == 'equal':
+            entity1 = get_sketch_entity(params['entity1_index'], params['entity1_type'])
+            entity2 = get_sketch_entity(params['entity2_index'], params['entity2_type'])
+            if entity1 and entity2:
+                constraint = constraints.addEqual(entity1, entity2)
+
+        else:
+            return {'status': 'error', 'message': f'Unknown constraint type: {constraint_type}'}
+
+        if constraint is None:
+            return {'status': 'error', 'message': 'Failed to create constraint - invalid entities'}
+
+        return {
+            'status': 'success',
+            'data': {
+                'sketch': sketch_name,
+                'constraint_type': constraint_type,
+                'is_healthy': constraint.isValid
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to add constraint: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_sketch_add_dimension(params):
+    """Add a dimension constraint to a sketch"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get sketch
+        sketch_path = params['sketch_path']
+        sketch_name = sketch_path.split('/')[-1]
+
+        sketch = None
+        for s in root.sketches:
+            if s.name == sketch_name:
+                sketch = s
+                break
+
+        if sketch is None:
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+
+        dimension_type = params['dimension_type']
+        value = params['value']
+
+        # Helper function to get sketch entity by index
+        def get_sketch_entity(entity_index, entity_type):
+            if entity_type == 'line':
+                if entity_index < sketch.sketchCurves.sketchLines.count:
+                    return sketch.sketchCurves.sketchLines.item(entity_index)
+            elif entity_type == 'circle':
+                if entity_index < sketch.sketchCurves.sketchCircles.count:
+                    return sketch.sketchCurves.sketchCircles.item(entity_index)
+            elif entity_type == 'arc':
+                if entity_index < sketch.sketchCurves.sketchArcs.count:
+                    return sketch.sketchCurves.sketchArcs.item(entity_index)
+            elif entity_type == 'point':
+                if entity_index < sketch.sketchPoints.count:
+                    return sketch.sketchPoints.item(entity_index)
+            return None
+
+        dimensions = sketch.sketchDimensions
+        dimension = None
+
+        # Apply dimension based on type
+        if dimension_type == 'distance':
+            # Distance between two points
+            point1 = get_sketch_entity(params['point1_index'], 'point')
+            point2 = get_sketch_entity(params['point2_index'], 'point')
+            if point1 and point2:
+                text_point = adsk.core.Point3D.create(
+                    (point1.geometry.x + point2.geometry.x) / 2,
+                    (point1.geometry.y + point2.geometry.y) / 2,
+                    0
+                )
+                dimension = dimensions.addDistanceDimension(
+                    point1, point2,
+                    adsk.fusion.DimensionOrientations.AlignedDimensionOrientation,
+                    text_point
+                )
+
+        elif dimension_type == 'linear':
+            # Linear dimension for a line
+            line = get_sketch_entity(params['line_index'], 'line')
+            if line:
+                text_point = adsk.core.Point3D.create(
+                    (line.startSketchPoint.geometry.x + line.endSketchPoint.geometry.x) / 2,
+                    (line.startSketchPoint.geometry.y + line.endSketchPoint.geometry.y) / 2 + 1,
+                    0
+                )
+                dimension = dimensions.addDistanceDimension(
+                    line.startSketchPoint, line.endSketchPoint,
+                    adsk.fusion.DimensionOrientations.AlignedDimensionOrientation,
+                    text_point
+                )
+
+        elif dimension_type == 'radius':
+            # Radius dimension for circle or arc
+            entity = None
+            if 'circle_index' in params:
+                entity = get_sketch_entity(params['circle_index'], 'circle')
+            elif 'arc_index' in params:
+                entity = get_sketch_entity(params['arc_index'], 'arc')
+
+            if entity:
+                text_point = adsk.core.Point3D.create(
+                    entity.centerSketchPoint.geometry.x + entity.radius,
+                    entity.centerSketchPoint.geometry.y,
+                    0
+                )
+                dimension = dimensions.addRadialDimension(entity, text_point)
+
+        elif dimension_type == 'diameter':
+            # Diameter dimension for circle or arc
+            entity = None
+            if 'circle_index' in params:
+                entity = get_sketch_entity(params['circle_index'], 'circle')
+            elif 'arc_index' in params:
+                entity = get_sketch_entity(params['arc_index'], 'arc')
+
+            if entity:
+                text_point = adsk.core.Point3D.create(
+                    entity.centerSketchPoint.geometry.x + entity.radius,
+                    entity.centerSketchPoint.geometry.y,
+                    0
+                )
+                dimension = dimensions.addDiameterDimension(entity, text_point)
+
+        elif dimension_type == 'angle':
+            # Angular dimension between two lines
+            line1 = get_sketch_entity(params['line1_index'], 'line')
+            line2 = get_sketch_entity(params['line2_index'], 'line')
+            if line1 and line2:
+                text_point = adsk.core.Point3D.create(0, 0, 0)
+                dimension = dimensions.addAngularDimension(line1, line2, text_point)
+
+        else:
+            return {'status': 'error', 'message': f'Unknown dimension type: {dimension_type}'}
+
+        if dimension is None:
+            return {'status': 'error', 'message': 'Failed to create dimension - invalid entities'}
+
+        # Set the dimension value
+        dimension.parameter.value = value
+
+        return {
+            'status': 'success',
+            'data': {
+                'sketch': sketch_name,
+                'dimension_type': dimension_type,
+                'value': dimension.parameter.value,
+                'parameter_name': dimension.parameter.name
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to add dimension: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
 def _handle_find_faces_by_criteria(params):
     """Find faces matching search criteria"""
     body, _ = _resolve_element_path(params['body_path'])
@@ -1654,6 +2518,26 @@ class MainThreadExecutor(adsk.core.CustomEventHandler):
                 result = _handle_rotate_body(event_args.get('params', {}))
             elif operation == 'mirror_body':
                 result = _handle_mirror_body(event_args.get('params', {}))
+            elif operation == 'split_body':
+                result = _handle_split_body(event_args.get('params', {}))
+            elif operation == 'boolean_operation':
+                result = _handle_boolean_operation(event_args.get('params', {}))
+            elif operation == 'create_sketch':
+                result = _handle_create_sketch(event_args.get('params', {}))
+            elif operation == 'sketch_add_line':
+                result = _handle_sketch_add_line(event_args.get('params', {}))
+            elif operation == 'sketch_add_circle':
+                result = _handle_sketch_add_circle(event_args.get('params', {}))
+            elif operation == 'sketch_add_arc':
+                result = _handle_sketch_add_arc(event_args.get('params', {}))
+            elif operation == 'sketch_add_rectangle':
+                result = _handle_sketch_add_rectangle(event_args.get('params', {}))
+            elif operation == 'sketch_add_point':
+                result = _handle_sketch_add_point(event_args.get('params', {}))
+            elif operation == 'sketch_add_constraint':
+                result = _handle_sketch_add_constraint(event_args.get('params', {}))
+            elif operation == 'sketch_add_dimension':
+                result = _handle_sketch_add_dimension(event_args.get('params', {}))
             else:
                 result = {'status': 'error', 'error': f'Unknown operation: {operation}'}
 
@@ -1746,10 +2630,15 @@ def run(context):
         _server_thread.start()
         
         ui.messageBox(
-            'Fusion Script Executor v5.3.1\n\n'
-            'FIXED v5.3.1: Custom construction planes now work as offset references\n'
-            'NEW v5.3.0: Transform tools - move, rotate, mirror bodies\n'
-            'FIXED v5.2.2: ConstructionPoint environment errors - using sketch geometry\n'
+            'Fusion Script Executor v5.6.0\n\n'
+            'NEW v5.6.0: Sketch constraints and dimensions - geometric constraints, parametric dimensions\n'
+            'NEW v5.5.2: Added point tool to sketch tools\n'
+            'FIXED v5.5.1: Arc response now returns working properties (start/end points, length)\n'
+            'NEW v5.5.0: Sketch tools - create sketch, add lines, circles, arcs, rectangles\n'
+            'FIXED v5.4.2: Simplified split_body - always keeps both halves\n'
+            'FIXED v5.4.1: split_body now supports XY/XZ/YZ shortcuts and face paths\n'
+            'v5.4: Body modification - split body, boolean operations\n'
+            'v5.3: Transform tools - move, rotate, mirror bodies\n'
             'v5.2: Construction tools (planes, axes)\n'
             'v5.1: Geometry search (find edges/faces by criteria)\n'
             'v5.0: Measurement tools (distance, angle, edge/face inspection)\n\n'

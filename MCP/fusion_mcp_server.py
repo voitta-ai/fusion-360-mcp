@@ -598,6 +598,415 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": ["body_path", "mirror_plane"]
             }
+        ),
+        types.Tool(
+            name="fusion_split_body",
+            description="Split a body using a plane or face as the splitting tool. Creates two separate bodies from the original. Modifies the design timeline.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "body_path": {
+                        "type": "string",
+                        "description": "Path to body to split. Format: 'root/bRepBodies/BodyName'"
+                    },
+                    "split_tool": {
+                        "type": "string",
+                        "description": "Path to splitting tool. Can be construction plane (e.g., 'root/constructionPlanes/Plane1' or 'XY'/'XZ'/'YZ') or face path (e.g., 'root/bRepBodies/Body/faces/0')"
+                    }
+                },
+                "required": ["body_path", "split_tool"]
+            }
+        ),
+        types.Tool(
+            name="fusion_boolean_operation",
+            description="Perform boolean operation (join, cut, intersect) between two bodies. Modifies the target body and optionally consumes the tool body. Modifies the design timeline.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "target_body": {
+                        "type": "string",
+                        "description": "Path to target body (the body being modified). Format: 'root/bRepBodies/BodyName'"
+                    },
+                    "tool_body": {
+                        "type": "string",
+                        "description": "Path to tool body (the body used for the operation). Format: 'root/bRepBodies/BodyName'"
+                    },
+                    "operation": {
+                        "type": "string",
+                        "description": "Boolean operation type",
+                        "enum": ["join", "cut", "intersect"]
+                    },
+                    "keep_tool": {
+                        "type": "boolean",
+                        "description": "If true, keep the tool body after operation. If false, tool body is consumed. Default: false",
+                        "default": False
+                    }
+                },
+                "required": ["target_body", "tool_body", "operation"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_sketch",
+            description="Create a new sketch on a construction plane. Sketches can then have geometry added via sketch_add_* tools.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "plane": {
+                        "type": "string",
+                        "description": "Path to construction plane. Can use shortcuts 'XY', 'XZ', 'YZ' or full path like 'root/constructionPlanes/Plane1'"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Optional name for the sketch (default: 'Sketch')",
+                        "default": "Sketch"
+                    }
+                },
+                "required": ["plane"]
+            }
+        ),
+        types.Tool(
+            name="fusion_sketch_add_line",
+            description="Add a line to an existing sketch. Requires sketch_path from fusion_create_sketch or fusion_get_tree.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sketch_path": {
+                        "type": "string",
+                        "description": "Path to sketch. Format: 'root/sketches/SketchName'"
+                    },
+                    "point1": {
+                        "type": "object",
+                        "description": "Start point in sketch coordinates (x, y)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        },
+                        "required": ["x", "y"]
+                    },
+                    "point2": {
+                        "type": "object",
+                        "description": "End point in sketch coordinates (x, y)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        },
+                        "required": ["x", "y"]
+                    }
+                },
+                "required": ["sketch_path", "point1", "point2"]
+            }
+        ),
+        types.Tool(
+            name="fusion_sketch_add_circle",
+            description="Add a circle to an existing sketch. Supports center+radius or 3-point circle.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sketch_path": {
+                        "type": "string",
+                        "description": "Path to sketch. Format: 'root/sketches/SketchName'"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["center_radius", "three_points"],
+                        "description": "Circle creation mode",
+                        "default": "center_radius"
+                    },
+                    "center": {
+                        "type": "object",
+                        "description": "Center point (for center_radius mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    },
+                    "radius": {
+                        "type": "number",
+                        "description": "Circle radius in cm (for center_radius mode)"
+                    },
+                    "point1": {
+                        "type": "object",
+                        "description": "First point (for three_points mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    },
+                    "point2": {
+                        "type": "object",
+                        "description": "Second point (for three_points mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    },
+                    "point3": {
+                        "type": "object",
+                        "description": "Third point (for three_points mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    }
+                },
+                "required": ["sketch_path"]
+            }
+        ),
+        types.Tool(
+            name="fusion_sketch_add_arc",
+            description="Add an arc to an existing sketch. Supports 3-point arc or center+start+sweep arc.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sketch_path": {
+                        "type": "string",
+                        "description": "Path to sketch. Format: 'root/sketches/SketchName'"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["three_points", "center_start_end"],
+                        "description": "Arc creation mode",
+                        "default": "three_points"
+                    },
+                    "point1": {
+                        "type": "object",
+                        "description": "First/start point",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    },
+                    "point2": {
+                        "type": "object",
+                        "description": "Second/mid point (for three_points mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    },
+                    "point3": {
+                        "type": "object",
+                        "description": "Third/end point (for three_points mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    },
+                    "center": {
+                        "type": "object",
+                        "description": "Center point (for center_start_end mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    },
+                    "start": {
+                        "type": "object",
+                        "description": "Start point (for center_start_end mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    },
+                    "sweep_angle": {
+                        "type": "number",
+                        "description": "Sweep angle in degrees (for center_start_end mode)"
+                    }
+                },
+                "required": ["sketch_path"]
+            }
+        ),
+        types.Tool(
+            name="fusion_sketch_add_rectangle",
+            description="Add a rectangle to an existing sketch. Supports two-corner or center-corner rectangle.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sketch_path": {
+                        "type": "string",
+                        "description": "Path to sketch. Format: 'root/sketches/SketchName'"
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["two_points", "center_point"],
+                        "description": "Rectangle creation mode",
+                        "default": "two_points"
+                    },
+                    "point1": {
+                        "type": "object",
+                        "description": "First corner (for two_points mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    },
+                    "point2": {
+                        "type": "object",
+                        "description": "Opposite corner (for two_points mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    },
+                    "center": {
+                        "type": "object",
+                        "description": "Center point (for center_point mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    },
+                    "corner": {
+                        "type": "object",
+                        "description": "Corner point (for center_point mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"}
+                        }
+                    }
+                },
+                "required": ["sketch_path"]
+            }
+        ),
+        types.Tool(
+            name="fusion_sketch_add_point",
+            description="Add a point to an existing sketch at specified coordinates.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sketch_path": {
+                        "type": "string",
+                        "description": "Path to sketch. Format: 'root/sketches/SketchName'"
+                    },
+                    "x": {
+                        "type": "number",
+                        "description": "X coordinate of the point"
+                    },
+                    "y": {
+                        "type": "number",
+                        "description": "Y coordinate of the point"
+                    },
+                    "z": {
+                        "type": "number",
+                        "description": "Z coordinate of the point (defaults to 0 for 2D sketches)",
+                        "default": 0
+                    }
+                },
+                "required": ["sketch_path", "x", "y"]
+            }
+        ),
+        types.Tool(
+            name="fusion_sketch_add_constraint",
+            description="Add a geometric constraint to sketch entities. Supports horizontal, vertical, parallel, perpendicular, tangent, coincident, concentric, midpoint, and equal constraints.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sketch_path": {
+                        "type": "string",
+                        "description": "Path to sketch. Format: 'root/sketches/SketchName'"
+                    },
+                    "constraint_type": {
+                        "type": "string",
+                        "description": "Type of constraint",
+                        "enum": ["horizontal", "vertical", "parallel", "perpendicular", "tangent", "coincident", "concentric", "midpoint", "equal"]
+                    },
+                    "entity_index": {
+                        "type": "integer",
+                        "description": "Index of entity for single-entity constraints (horizontal, vertical)"
+                    },
+                    "entity_type": {
+                        "type": "string",
+                        "description": "Type of entity for single-entity constraints",
+                        "enum": ["line", "circle", "arc", "point"]
+                    },
+                    "entity1_index": {
+                        "type": "integer",
+                        "description": "Index of first entity for two-entity constraints"
+                    },
+                    "entity1_type": {
+                        "type": "string",
+                        "description": "Type of first entity",
+                        "enum": ["line", "circle", "arc", "point"]
+                    },
+                    "entity2_index": {
+                        "type": "integer",
+                        "description": "Index of second entity for two-entity constraints"
+                    },
+                    "entity2_type": {
+                        "type": "string",
+                        "description": "Type of second entity",
+                        "enum": ["line", "circle", "arc", "point"]
+                    },
+                    "point_index": {
+                        "type": "integer",
+                        "description": "Index of point for midpoint constraint"
+                    },
+                    "point1_index": {
+                        "type": "integer",
+                        "description": "Index of point for coincident constraint. Use with point2_index (point-to-point) or entity2_index+entity2_type (point-to-curve)"
+                    },
+                    "point2_index": {
+                        "type": "integer",
+                        "description": "Index of second point for point-to-point coincident constraint"
+                    },
+                    "line_index": {
+                        "type": "integer",
+                        "description": "Index of line for midpoint constraint"
+                    }
+                },
+                "required": ["sketch_path", "constraint_type"]
+            }
+        ),
+        types.Tool(
+            name="fusion_sketch_add_dimension",
+            description="Add a dimension constraint to sketch entities. Supports distance, linear, radius, diameter, and angle dimensions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sketch_path": {
+                        "type": "string",
+                        "description": "Path to sketch. Format: 'root/sketches/SketchName'"
+                    },
+                    "dimension_type": {
+                        "type": "string",
+                        "description": "Type of dimension",
+                        "enum": ["distance", "linear", "radius", "diameter", "angle"]
+                    },
+                    "value": {
+                        "type": "number",
+                        "description": "Dimension value in current document units (cm for distance/radius/diameter, degrees for angle)"
+                    },
+                    "point1_index": {
+                        "type": "integer",
+                        "description": "Index of first point for distance dimension (point-to-point only)"
+                    },
+                    "point2_index": {
+                        "type": "integer",
+                        "description": "Index of second point for distance dimension (required for distance type)"
+                    },
+                    "line_index": {
+                        "type": "integer",
+                        "description": "Index of line for linear dimension"
+                    },
+                    "circle_index": {
+                        "type": "integer",
+                        "description": "Index of circle for radius/diameter dimension"
+                    },
+                    "arc_index": {
+                        "type": "integer",
+                        "description": "Index of arc for radius/diameter dimension"
+                    },
+                    "line1_index": {
+                        "type": "integer",
+                        "description": "Index of first line for angle dimension"
+                    },
+                    "line2_index": {
+                        "type": "integer",
+                        "description": "Index of second line for angle dimension"
+                    }
+                },
+                "required": ["sketch_path", "dimension_type", "value"]
+            }
         )
     ]
 
@@ -625,7 +1034,17 @@ async def handle_call_tool(
         'fusion_create_axis': 'create_axis',
         'fusion_move_body': 'move_body',
         'fusion_rotate_body': 'rotate_body',
-        'fusion_mirror_body': 'mirror_body'
+        'fusion_mirror_body': 'mirror_body',
+        'fusion_split_body': 'split_body',
+        'fusion_boolean_operation': 'boolean_operation',
+        'fusion_create_sketch': 'create_sketch',
+        'fusion_sketch_add_line': 'sketch_add_line',
+        'fusion_sketch_add_circle': 'sketch_add_circle',
+        'fusion_sketch_add_arc': 'sketch_add_arc',
+        'fusion_sketch_add_rectangle': 'sketch_add_rectangle',
+        'fusion_sketch_add_point': 'sketch_add_point',
+        'fusion_sketch_add_constraint': 'sketch_add_constraint',
+        'fusion_sketch_add_dimension': 'sketch_add_dimension'
     }
 
     if name not in operation_map:
@@ -697,7 +1116,7 @@ async def main():
             write_stream,
             InitializationOptions(
                 server_name="fusion360-mcp",
-                server_version="0.7.1",
+                server_version="0.10.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},
