@@ -542,6 +542,702 @@ def _handle_get_face_info(params):
             'data': _get_face_info(face, index)
         }
 
+def _edge_matches_criteria(edge, criteria):
+    """Check if edge matches all search criteria"""
+    import math
+
+    # Length criteria
+    if 'length_min' in criteria:
+        if edge.length < criteria['length_min']:
+            return False
+
+    if 'length_max' in criteria:
+        if edge.length > criteria['length_max']:
+            return False
+
+    if 'length_equals' in criteria:
+        tolerance = criteria.get('length_tolerance', 0.001)
+        if abs(edge.length - criteria['length_equals']) > tolerance:
+            return False
+
+    # Curve type criteria
+    if 'curve_type' in criteria:
+        geom = edge.geometry
+        curve_type_map = {
+            'line': adsk.core.Curve3DTypes.Line3DCurveType,
+            'circle': adsk.core.Curve3DTypes.Circle3DCurveType,
+            'arc': adsk.core.Curve3DTypes.Arc3DCurveType,
+            'ellipse': adsk.core.Curve3DTypes.Ellipse3DCurveType,
+            'elliptical_arc': adsk.core.Curve3DTypes.EllipticalArc3DCurveType,
+            'spline': adsk.core.Curve3DTypes.NurbsCurve3DCurveType
+        }
+        if geom.curveType != curve_type_map.get(criteria['curve_type']):
+            return False
+
+    # Get edge points for directional tests
+    geom = edge.geometry
+    if hasattr(geom, 'startPoint') and hasattr(geom, 'endPoint'):
+        start_point = geom.startPoint
+        end_point = geom.endPoint
+    else:
+        # Use evaluator for curves without direct access
+        evaluator = geom.evaluator
+        extents = evaluator.getParameterExtents()
+        success, start_point = evaluator.getPointAtParameter(extents[1])
+        success, end_point = evaluator.getPointAtParameter(extents[2])
+
+    # Proximity to point criteria
+    if 'near_point' in criteria:
+        near = criteria['near_point']
+        point = adsk.core.Point3D.create(near['x'], near['y'], near['z'])
+        radius = near.get('radius', 1.0)
+
+        # Check if edge's midpoint is within radius
+        mid_x = (start_point.x + end_point.x) / 2.0
+        mid_y = (start_point.y + end_point.y) / 2.0
+        mid_z = (start_point.z + end_point.z) / 2.0
+        mid_point = adsk.core.Point3D.create(mid_x, mid_y, mid_z)
+
+        if mid_point.distanceTo(point) > radius:
+            return False
+
+    # Parallel to direction criteria
+    if 'parallel_to' in criteria:
+        par = criteria['parallel_to']
+        target_dir = adsk.core.Vector3D.create(par['x'], par['y'], par['z'])
+        target_dir.normalize()
+
+        # Skip closed curves (circles)
+        if start_point.distanceTo(end_point) > 0.001:
+            edge_dir = start_point.vectorTo(end_point)
+            edge_dir.normalize()
+
+            # Check if parallel (angle close to 0 or 180 degrees)
+            angle = edge_dir.angleTo(target_dir)
+            tolerance = criteria.get('angle_tolerance', 0.017)  # ~1 degree in radians
+
+            if not (angle < tolerance or abs(angle - math.pi) < tolerance):
+                return False
+
+    # Perpendicular to direction criteria
+    if 'perpendicular_to' in criteria:
+        perp = criteria['perpendicular_to']
+        target_dir = adsk.core.Vector3D.create(perp['x'], perp['y'], perp['z'])
+        target_dir.normalize()
+
+        # Skip closed curves
+        if start_point.distanceTo(end_point) > 0.001:
+            edge_dir = start_point.vectorTo(end_point)
+            edge_dir.normalize()
+
+            # Check if perpendicular (angle close to 90 degrees)
+            angle = edge_dir.angleTo(target_dir)
+            tolerance = criteria.get('angle_tolerance', 0.017)  # ~1 degree
+
+            if abs(angle - math.pi/2) > tolerance:
+                return False
+
+    return True
+
+def _handle_find_edges_by_criteria(params):
+    """Find edges matching search criteria"""
+    body, _ = _resolve_element_path(params['body_path'])
+    criteria = params.get('criteria', {})
+
+    matching_edges = []
+
+    for i in range(body.edges.count):
+        edge = body.edges.item(i)
+        if _edge_matches_criteria(edge, criteria):
+            edge_info = _get_edge_info(edge, i)
+            edge_info['path'] = f"{params['body_path']}/edges/{i}"
+            matching_edges.append(edge_info)
+
+    return {
+        'status': 'success',
+        'data': {
+            'body': body.name,
+            'match_count': len(matching_edges),
+            'edges': matching_edges
+        }
+    }
+
+def _face_matches_criteria(face, criteria):
+    """Check if face matches all search criteria"""
+    import math
+
+    # Area criteria
+    if 'area_min' in criteria:
+        if face.area < criteria['area_min']:
+            return False
+
+    if 'area_max' in criteria:
+        if face.area > criteria['area_max']:
+            return False
+
+    if 'area_equals' in criteria:
+        tolerance = criteria.get('area_tolerance', 0.001)
+        if abs(face.area - criteria['area_equals']) > tolerance:
+            return False
+
+    # Surface type criteria
+    if 'surface_type' in criteria:
+        geom = face.geometry
+        surface_type_map = {
+            'planar': adsk.core.SurfaceTypes.PlaneSurfaceType,
+            'cylindrical': adsk.core.SurfaceTypes.CylinderSurfaceType,
+            'conical': adsk.core.SurfaceTypes.ConeSurfaceType,
+            'spherical': adsk.core.SurfaceTypes.SphereSurfaceType,
+            'toroidal': adsk.core.SurfaceTypes.TorusSurfaceType
+        }
+        if geom.surfaceType != surface_type_map.get(criteria['surface_type']):
+            return False
+
+    # Normal direction criteria (for planar faces)
+    if 'normal_direction' in criteria:
+        geom = face.geometry
+
+        # Only apply to planar faces
+        if geom.surfaceType == adsk.core.SurfaceTypes.PlaneSurfaceType:
+            norm_crit = criteria['normal_direction']
+            target_normal = adsk.core.Vector3D.create(norm_crit['x'], norm_crit['y'], norm_crit['z'])
+            target_normal.normalize()
+
+            face_normal = geom.normal
+
+            # Check if normals are aligned
+            angle = face_normal.angleTo(target_normal)
+            tolerance = criteria.get('angle_tolerance', 0.017)  # ~1 degree
+
+            if not (angle < tolerance or abs(angle - math.pi) < tolerance):
+                return False
+
+    # Proximity to point criteria
+    if 'near_point' in criteria:
+        near = criteria['near_point']
+        point = adsk.core.Point3D.create(near['x'], near['y'], near['z'])
+        radius = near.get('radius', 1.0)
+
+        # Check if face centroid is within radius
+        try:
+            centroid = face.centroid
+            if centroid.distanceTo(point) > radius:
+                return False
+        except:
+            # Face may not have valid centroid
+            return False
+
+    return True
+
+def _handle_create_plane(params):
+    """Create construction plane"""
+    import math
+
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+    mode = params.get('mode', 'offset')
+    name = params.get('name', 'ConstructionPlane')
+
+    planes = root.constructionPlanes
+
+    try:
+        if mode == 'offset':
+            # Offset from existing plane
+            ref_plane_path = params.get('reference_plane')
+            offset = params.get('offset', 0.0)
+
+            # Resolve reference plane - handle built-in planes specially
+            # Check if it's a reference to XY/XZ/YZ built-in planes
+            if 'XY Plane' in ref_plane_path or ref_plane_path.endswith('/XY') or ref_plane_path == 'XY':
+                ref_plane = root.xYConstructionPlane
+            elif 'XZ Plane' in ref_plane_path or ref_plane_path.endswith('/XZ') or ref_plane_path == 'XZ':
+                ref_plane = root.xZConstructionPlane
+            elif 'YZ Plane' in ref_plane_path or ref_plane_path.endswith('/YZ') or ref_plane_path == 'YZ':
+                ref_plane = root.yZConstructionPlane
+            elif ref_plane_path.startswith('root/constructionPlanes/'):
+                # FIX v5.3.1: Handle custom construction planes by direct collection search
+                # _resolve_element_path doesn't work correctly for construction planes
+                plane_name = ref_plane_path.split('/')[-1]
+                ref_plane = None
+                for p in root.constructionPlanes:
+                    if p.name == plane_name:
+                        ref_plane = p
+                        break
+                if ref_plane is None:
+                    raise ValueError(f'Construction plane "{plane_name}" not found. Available: {[p.name for p in root.constructionPlanes]}')
+            else:
+                # Other path types - try standard resolution
+                ref_plane, _ = _resolve_element_path(ref_plane_path)
+
+            # Create plane input
+            plane_input = planes.createInput()
+            offset_value = adsk.core.ValueInput.createByReal(offset)
+            plane_input.setByOffset(ref_plane, offset_value)
+
+            # Add plane
+            plane = planes.add(plane_input)
+            plane.name = name
+
+            return {
+                'status': 'success',
+                'data': {
+                    'plane_path': f"root/constructionPlanes/{plane.name}",
+                    'name': plane.name,
+                    'mode': 'offset',
+                    'offset': offset
+                }
+            }
+
+        elif mode == 'three_points':
+            # Plane through three points
+            # Note: ConstructionPoints require specific environment. Use sketch points instead.
+            p1_data = params['point1']
+            p2_data = params['point2']
+            p3_data = params['point3']
+
+            # Create temporary sketch for points
+            temp_sketch = root.sketches.add(root.xYConstructionPlane)
+            temp_sketch.name = f"_temp_sketch_for_{name}"
+
+            # Add sketch points
+            pt1_obj = temp_sketch.sketchPoints.add(adsk.core.Point3D.create(p1_data['x'], p1_data['y'], p1_data['z']))
+            pt2_obj = temp_sketch.sketchPoints.add(adsk.core.Point3D.create(p2_data['x'], p2_data['y'], p2_data['z']))
+            pt3_obj = temp_sketch.sketchPoints.add(adsk.core.Point3D.create(p3_data['x'], p3_data['y'], p3_data['z']))
+
+            # Create plane using sketch points
+            plane_input = planes.createInput()
+            plane_input.setByThreePoints(pt1_obj, pt2_obj, pt3_obj)
+            plane = planes.add(plane_input)
+            plane.name = name
+
+            # Calculate normal vector for return data
+            p1 = adsk.core.Point3D.create(p1_data['x'], p1_data['y'], p1_data['z'])
+            p2 = adsk.core.Point3D.create(p2_data['x'], p2_data['y'], p2_data['z'])
+            p3 = adsk.core.Point3D.create(p3_data['x'], p3_data['y'], p3_data['z'])
+            v1 = p1.vectorTo(p2)
+            v2 = p1.vectorTo(p3)
+            normal = v1.crossProduct(v2)
+            normal.normalize()
+
+            return {
+                'status': 'success',
+                'data': {
+                    'plane_path': f"root/constructionPlanes/{plane.name}",
+                    'name': plane.name,
+                    'mode': 'three_points',
+                    'origin': p1_data,
+                    'normal': {'x': normal.x, 'y': normal.y, 'z': normal.z}
+                }
+            }
+
+        elif mode == 'angle':
+            # Plane at angle from reference plane around axis
+            ref_plane_path = params.get('reference_plane')
+            angle_deg = params.get('angle', 0.0)
+
+            # Resolve reference plane - handle built-in planes specially
+            if 'XY Plane' in ref_plane_path or ref_plane_path.endswith('/XY') or ref_plane_path == 'XY':
+                ref_plane = root.xYConstructionPlane
+            elif 'XZ Plane' in ref_plane_path or ref_plane_path.endswith('/XZ') or ref_plane_path == 'XZ':
+                ref_plane = root.xZConstructionPlane
+            elif 'YZ Plane' in ref_plane_path or ref_plane_path.endswith('/YZ') or ref_plane_path == 'YZ':
+                ref_plane = root.yZConstructionPlane
+            else:
+                # Custom construction plane
+                ref_plane, _ = _resolve_element_path(ref_plane_path)
+
+            # Get axis (either path to construction axis or X/Y/Z)
+            axis_spec = params.get('axis', 'X')
+
+            if isinstance(axis_spec, str):
+                # Named axis (X, Y, Z)
+                if axis_spec.upper() == 'X':
+                    axis = root.xConstructionAxis
+                elif axis_spec.upper() == 'Y':
+                    axis = root.yConstructionAxis
+                elif axis_spec.upper() == 'Z':
+                    axis = root.zConstructionAxis
+                else:
+                    # Path to construction axis
+                    axis, _ = _resolve_element_path(axis_spec)
+            else:
+                # Should be a path
+                axis, _ = _resolve_element_path(axis_spec)
+
+            plane_input = planes.createInput()
+            angle_value = adsk.core.ValueInput.createByReal(math.radians(angle_deg))
+            # Correct parameter order: setByAngle(linearEntity, angle, planarEntity)
+            plane_input.setByAngle(axis, angle_value, ref_plane)
+            plane = planes.add(plane_input)
+            plane.name = name
+
+            return {
+                'status': 'success',
+                'data': {
+                    'plane_path': f"root/constructionPlanes/{plane.name}",
+                    'name': plane.name,
+                    'mode': 'angle',
+                    'angle': angle_deg
+                }
+            }
+
+        elif mode == 'perpendicular':
+            # Plane perpendicular to edge at point
+            # Note: Fusion API doesn't have a direct "perpendicular to edge at point" method
+            # Use setByDistanceOnPath which creates a plane perpendicular to the edge
+            edge_path = params['edge']
+            point_data = params.get('point', {})
+
+            # Resolve edge
+            edge, _ = _resolve_geometry_path(edge_path)
+
+            # setByDistanceOnPath creates a plane perpendicular to edge's path
+            # The distance parameter controls position along the edge
+            # For now, create at edge start (distance=0)
+            plane_input = planes.createInput()
+            plane_input.setByDistanceOnPath(edge, adsk.core.ValueInput.createByReal(0))
+            plane = planes.add(plane_input)
+            plane.name = name
+
+            return {
+                'status': 'success',
+                'data': {
+                    'plane_path': f"root/constructionPlanes/{plane.name}",
+                    'name': plane.name,
+                    'mode': 'perpendicular',
+                    'note': 'Plane created perpendicular to edge at start point (distance=0)'
+                }
+            }
+
+        else:
+            return {'status': 'error', 'message': f'Unknown mode: {mode}'}
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to create plane: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_create_axis(params):
+    """Create construction axis"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+    mode = params.get('mode', 'two_points')
+    name = params.get('name', 'ConstructionAxis')
+
+    axes = root.constructionAxes
+
+    try:
+        if mode == 'two_points':
+            # Axis through two points
+            # Note: ConstructionPoints require specific environment. Use sketch line approach.
+            p1_data = params['point1']
+            p2_data = params['point2']
+
+            # Create temporary sketch with line
+            temp_sketch = root.sketches.add(root.xYConstructionPlane)
+            temp_sketch.name = f"_temp_sketch_for_{name}"
+
+            pt1 = adsk.core.Point3D.create(p1_data['x'], p1_data['y'], p1_data['z'])
+            pt2 = adsk.core.Point3D.create(p2_data['x'], p2_data['y'], p2_data['z'])
+
+            # Create sketch line
+            line = temp_sketch.sketchCurves.sketchLines.addByTwoPoints(pt1, pt2)
+
+            # Create axis from the line's geometry (converts to infinite line)
+            axis_input = axes.createInput()
+            line_geom = line.geometry
+            infinite_line = line_geom.asInfiniteLine()
+            axis_input.setByLine(infinite_line)
+            axis = axes.add(axis_input)
+            axis.name = name
+
+            # Calculate direction vector for return data
+            direction = pt1.vectorTo(pt2)
+            direction.normalize()
+
+            return {
+                'status': 'success',
+                'data': {
+                    'axis_path': f"root/constructionAxes/{axis.name}",
+                    'name': axis.name,
+                    'mode': 'two_points',
+                    'origin': p1_data,
+                    'direction': {'x': direction.x, 'y': direction.y, 'z': direction.z}
+                }
+            }
+
+        elif mode == 'edge':
+            # Axis along edge
+            edge_path = params['edge']
+            edge, _ = _resolve_geometry_path(edge_path)
+
+            axis_input = axes.createInput()
+            axis_input.setByEdge(edge)  # Fixed: was setByLine, should be setByEdge
+            axis = axes.add(axis_input)
+            axis.name = name
+
+            return {
+                'status': 'success',
+                'data': {
+                    'axis_path': f"root/constructionAxes/{axis.name}",
+                    'name': axis.name,
+                    'mode': 'edge'
+                }
+            }
+
+        elif mode == 'perpendicular':
+            # Axis perpendicular to face at point
+            face_path = params['face']
+            point_data = params['point']
+
+            face, _ = _resolve_geometry_path(face_path)
+            point = adsk.core.Point3D.create(point_data['x'], point_data['y'], point_data['z'])
+
+            axis_input = axes.createInput()
+            axis_input.setByNormalToFaceAtPoint(face, point)
+            axis = axes.add(axis_input)
+            axis.name = name
+
+            return {
+                'status': 'success',
+                'data': {
+                    'axis_path': f"root/constructionAxes/{axis.name}",
+                    'name': axis.name,
+                    'mode': 'perpendicular',
+                    'point': point_data
+                }
+            }
+
+        else:
+            return {'status': 'error', 'message': f'Unknown mode: {mode}'}
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to create axis: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_move_body(params):
+    """Move a body by a vector using MoveFeature"""
+    import math
+
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get body to move
+        body, _ = _resolve_element_path(params['body_path'])
+
+        # Get translation vector
+        vector_data = params['vector']
+        vector = adsk.core.Vector3D.create(
+            vector_data['x'],
+            vector_data['y'],
+            vector_data['z']
+        )
+
+        # Create transform matrix for translation
+        transform = adsk.core.Matrix3D.create()
+        transform.translation = vector
+
+        # Create move feature
+        move_features = root.features.moveFeatures
+        bodies_collection = adsk.core.ObjectCollection.create()
+        bodies_collection.add(body)
+
+        move_input = move_features.createInput(bodies_collection, transform)
+        move_feature = move_features.add(move_input)
+
+        return {
+            'status': 'success',
+            'data': {
+                'body_path': params['body_path'],
+                'translation': {
+                    'x': vector.x,
+                    'y': vector.y,
+                    'z': vector.z
+                },
+                'feature_name': move_feature.name
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to move body: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_rotate_body(params):
+    """Rotate a body around an axis by an angle"""
+    import math
+
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get body to rotate
+        body, _ = _resolve_element_path(params['body_path'])
+
+        # Get rotation axis
+        axis_data = params['axis']
+        origin_data = axis_data['origin']
+        direction_data = axis_data['direction']
+
+        origin = adsk.core.Point3D.create(
+            origin_data['x'],
+            origin_data['y'],
+            origin_data['z']
+        )
+
+        direction = adsk.core.Vector3D.create(
+            direction_data['x'],
+            direction_data['y'],
+            direction_data['z']
+        )
+        direction.normalize()
+
+        # Get angle (convert degrees to radians)
+        angle_deg = params['angle']
+        angle_rad = math.radians(angle_deg)
+
+        # Create rotation axis
+        axis_line = adsk.core.InfiniteLine3D.create(origin, direction)
+
+        # Create transform matrix for rotation
+        transform = adsk.core.Matrix3D.create()
+        transform.setToRotation(angle_rad, direction, origin)
+
+        # Create move feature (move features handle both translation and rotation)
+        move_features = root.features.moveFeatures
+        bodies_collection = adsk.core.ObjectCollection.create()
+        bodies_collection.add(body)
+
+        move_input = move_features.createInput(bodies_collection, transform)
+        move_feature = move_features.add(move_input)
+
+        return {
+            'status': 'success',
+            'data': {
+                'body_path': params['body_path'],
+                'angle': angle_deg,
+                'axis': {
+                    'origin': origin_data,
+                    'direction': direction_data
+                },
+                'feature_name': move_feature.name
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to rotate body: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_mirror_body(params):
+    """Mirror a body across a plane"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get body to mirror
+        body, _ = _resolve_element_path(params['body_path'])
+
+        # Get mirror plane
+        mirror_plane, _ = _resolve_element_path(params['mirror_plane'])
+
+        # Create mirror feature
+        mirror_features = root.features.mirrorFeatures
+
+        # Create object collection for bodies to mirror
+        input_entities = adsk.core.ObjectCollection.create()
+        input_entities.add(body)
+
+        # Create mirror input
+        mirror_input = mirror_features.createInput(input_entities, mirror_plane)
+
+        # Execute mirror
+        mirror_feature = mirror_features.add(mirror_input)
+
+        # Get the created mirrored body
+        mirrored_bodies = []
+        for new_body in mirror_feature.bodies:
+            mirrored_bodies.append({
+                'name': new_body.name,
+                'volume': new_body.volume,
+                'area': new_body.area
+            })
+
+        return {
+            'status': 'success',
+            'data': {
+                'original_body': params['body_path'],
+                'mirror_plane': params['mirror_plane'],
+                'feature_name': mirror_feature.name,
+                'mirrored_bodies': mirrored_bodies
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to mirror body: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_find_faces_by_criteria(params):
+    """Find faces matching search criteria"""
+    body, _ = _resolve_element_path(params['body_path'])
+    criteria = params.get('criteria', {})
+
+    matching_faces = []
+
+    for i in range(body.faces.count):
+        face = body.faces.item(i)
+        if _face_matches_criteria(face, criteria):
+            face_info = _get_face_info(face, i)
+            face_info['path'] = f"{params['body_path']}/faces/{i}"
+            matching_faces.append(face_info)
+
+    return {
+        'status': 'success',
+        'data': {
+            'body': body.name,
+            'match_count': len(matching_faces),
+            'faces': matching_faces
+        }
+    }
+
 def _handle_set_element_properties(params):
     """Set properties (visibility, grounding) for design elements"""
     app = adsk.core.Application.get()
@@ -944,6 +1640,20 @@ class MainThreadExecutor(adsk.core.CustomEventHandler):
                 result = _handle_get_edge_info(event_args.get('params', {}))
             elif operation == 'get_face_info':
                 result = _handle_get_face_info(event_args.get('params', {}))
+            elif operation == 'find_edges_by_criteria':
+                result = _handle_find_edges_by_criteria(event_args.get('params', {}))
+            elif operation == 'find_faces_by_criteria':
+                result = _handle_find_faces_by_criteria(event_args.get('params', {}))
+            elif operation == 'create_plane':
+                result = _handle_create_plane(event_args.get('params', {}))
+            elif operation == 'create_axis':
+                result = _handle_create_axis(event_args.get('params', {}))
+            elif operation == 'move_body':
+                result = _handle_move_body(event_args.get('params', {}))
+            elif operation == 'rotate_body':
+                result = _handle_rotate_body(event_args.get('params', {}))
+            elif operation == 'mirror_body':
+                result = _handle_mirror_body(event_args.get('params', {}))
             else:
                 result = {'status': 'error', 'error': f'Unknown operation: {operation}'}
 
@@ -1036,10 +1746,13 @@ def run(context):
         _server_thread.start()
         
         ui.messageBox(
-            'Fusion Script Executor v5.0\n\n'
-            'NEW: Measurement tools (distance, angle)\n'
-            'NEW: Edge/face inspection with full geometry info\n'
-            'Existing: screenshot, camera, tree, visibility/grounding\n\n'
+            'Fusion Script Executor v5.3.1\n\n'
+            'FIXED v5.3.1: Custom construction planes now work as offset references\n'
+            'NEW v5.3.0: Transform tools - move, rotate, mirror bodies\n'
+            'FIXED v5.2.2: ConstructionPoint environment errors - using sketch geometry\n'
+            'v5.2: Construction tools (planes, axes)\n'
+            'v5.1: Geometry search (find edges/faces by criteria)\n'
+            'v5.0: Measurement tools (distance, angle, edge/face inspection)\n\n'
             'All operations execute on Fusion\'s main thread!\n'
             'Endpoint: http://localhost:8080'
         )

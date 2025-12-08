@@ -31,13 +31,13 @@ async def test_tools():
         print()
 
     print("=" * 60)
-    print(f"\nExpected: 10 tools")
+    print(f"\nExpected: 17 tools")
     print(f"Found: {len(tools)} tools")
 
-    if len(tools) == 10:
-        print("✅ SUCCESS: All 10 tools registered correctly")
+    if len(tools) == 17:
+        print("✅ SUCCESS: All 17 tools registered correctly")
     else:
-        print(f"❌ ERROR: Expected 10 tools but found {len(tools)}")
+        print(f"❌ ERROR: Expected 17 tools but found {len(tools)}")
         print("\nExpected tools:")
         expected = [
             "execute_fusion_script",
@@ -49,7 +49,14 @@ async def test_tools():
             "fusion_measure_distance",
             "fusion_measure_angle",
             "fusion_get_edge_info",
-            "fusion_get_face_info"
+            "fusion_get_face_info",
+            "fusion_find_edges_by_criteria",
+            "fusion_find_faces_by_criteria",
+            "fusion_create_plane",
+            "fusion_create_axis",
+            "fusion_move_body",
+            "fusion_rotate_body",
+            "fusion_mirror_body"
         ]
         actual = [t.name for t in tools]
         for exp in expected:

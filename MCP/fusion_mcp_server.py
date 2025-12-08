@@ -259,6 +259,345 @@ async def handle_list_tools() -> list[types.Tool]:
                     }
                 }
             }
+        ),
+        types.Tool(
+            name="fusion_find_edges_by_criteria",
+            description="Search for edges matching criteria: length, curve type, location, orientation. Returns array of matching edges with full info and paths. Useful for finding specific geometry patterns.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "body_path": {
+                        "type": "string",
+                        "description": "Path to body to search. Example: 'root/bRepBodies/Body1' or 'root/children/Comp1/bRepBodies/Body1'"
+                    },
+                    "criteria": {
+                        "type": "object",
+                        "description": "Search criteria. All specified criteria must match (AND logic).",
+                        "properties": {
+                            "length_min": {
+                                "type": "number",
+                                "description": "Minimum edge length in cm"
+                            },
+                            "length_max": {
+                                "type": "number",
+                                "description": "Maximum edge length in cm"
+                            },
+                            "length_equals": {
+                                "type": "number",
+                                "description": "Exact edge length in cm (with tolerance)"
+                            },
+                            "length_tolerance": {
+                                "type": "number",
+                                "description": "Tolerance for length_equals (default: 0.001 cm)",
+                                "default": 0.001
+                            },
+                            "curve_type": {
+                                "type": "string",
+                                "enum": ["line", "arc", "circle", "ellipse", "elliptical_arc", "spline"],
+                                "description": "Type of curve geometry"
+                            },
+                            "near_point": {
+                                "type": "object",
+                                "description": "Find edges near this point (checks edge midpoint)",
+                                "properties": {
+                                    "x": {"type": "number"},
+                                    "y": {"type": "number"},
+                                    "z": {"type": "number"},
+                                    "radius": {"type": "number", "description": "Search radius in cm"}
+                                }
+                            },
+                            "parallel_to": {
+                                "type": "object",
+                                "description": "Find edges parallel to this direction vector",
+                                "properties": {
+                                    "x": {"type": "number"},
+                                    "y": {"type": "number"},
+                                    "z": {"type": "number"}
+                                }
+                            },
+                            "perpendicular_to": {
+                                "type": "object",
+                                "description": "Find edges perpendicular to this direction vector",
+                                "properties": {
+                                    "x": {"type": "number"},
+                                    "y": {"type": "number"},
+                                    "z": {"type": "number"}
+                                }
+                            },
+                            "angle_tolerance": {
+                                "type": "number",
+                                "description": "Tolerance for parallel/perpendicular checks in radians (default: 0.017 = ~1 degree)",
+                                "default": 0.017
+                            }
+                        }
+                    }
+                },
+                "required": ["body_path"]
+            }
+        ),
+        types.Tool(
+            name="fusion_find_faces_by_criteria",
+            description="Search for faces matching criteria: area, surface type, normal direction. Returns array of matching faces with full info and paths. Useful for finding specific surface patterns.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "body_path": {
+                        "type": "string",
+                        "description": "Path to body to search. Example: 'root/bRepBodies/Body1' or 'root/children/Comp1/bRepBodies/Body1'"
+                    },
+                    "criteria": {
+                        "type": "object",
+                        "description": "Search criteria. All specified criteria must match (AND logic).",
+                        "properties": {
+                            "area_min": {
+                                "type": "number",
+                                "description": "Minimum face area in cm²"
+                            },
+                            "area_max": {
+                                "type": "number",
+                                "description": "Maximum face area in cm²"
+                            },
+                            "area_equals": {
+                                "type": "number",
+                                "description": "Exact face area in cm² (with tolerance)"
+                            },
+                            "area_tolerance": {
+                                "type": "number",
+                                "description": "Tolerance for area_equals (default: 0.001 cm²)",
+                                "default": 0.001
+                            },
+                            "surface_type": {
+                                "type": "string",
+                                "enum": ["planar", "cylindrical", "conical", "spherical", "toroidal"],
+                                "description": "Type of surface geometry"
+                            },
+                            "normal_direction": {
+                                "type": "object",
+                                "description": "Find planar faces with normal in this direction",
+                                "properties": {
+                                    "x": {"type": "number"},
+                                    "y": {"type": "number"},
+                                    "z": {"type": "number"}
+                                }
+                            },
+                            "near_point": {
+                                "type": "object",
+                                "description": "Find faces near this point (checks face centroid)",
+                                "properties": {
+                                    "x": {"type": "number"},
+                                    "y": {"type": "number"},
+                                    "z": {"type": "number"},
+                                    "radius": {"type": "number", "description": "Search radius in cm"}
+                                }
+                            },
+                            "angle_tolerance": {
+                                "type": "number",
+                                "description": "Tolerance for normal direction checks in radians (default: 0.017 = ~1 degree)",
+                                "default": 0.017
+                            }
+                        }
+                    }
+                },
+                "required": ["body_path"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_plane",
+            description="Create construction plane: offset from existing plane, at angle, through three points, or perpendicular to edge. Returns path to created plane.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["offset", "angle", "three_points", "perpendicular"],
+                        "description": "Construction method"
+                    },
+                    "reference_plane": {
+                        "type": "string",
+                        "description": "Path to reference plane (for offset/angle modes). Example: 'root/constructionPlanes/XY Plane' or use predefined: 'root/constructionPlanes/XY Plane', 'root/constructionPlanes/XZ Plane', 'root/constructionPlanes/YZ Plane'"
+                    },
+                    "offset": {
+                        "type": "number",
+                        "description": "Offset distance in cm (for offset mode)"
+                    },
+                    "angle": {
+                        "type": "number",
+                        "description": "Angle in degrees (for angle mode)"
+                    },
+                    "axis": {
+                        "type": "string",
+                        "description": "Rotation axis (for angle mode). Can be 'X', 'Y', 'Z' or path to construction axis"
+                    },
+                    "point1": {
+                        "type": "object",
+                        "description": "First point (for three_points mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        }
+                    },
+                    "point2": {
+                        "type": "object",
+                        "description": "Second point (for three_points mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        }
+                    },
+                    "point3": {
+                        "type": "object",
+                        "description": "Third point (for three_points mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        }
+                    },
+                    "edge": {
+                        "type": "string",
+                        "description": "Path to edge (for perpendicular mode). Format: 'root/bRepBodies/Body1/edges/0'"
+                    },
+                    "point": {
+                        "type": "object",
+                        "description": "Point on plane (for perpendicular mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        }
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Optional name for the plane (default: 'ConstructionPlane')"
+                    }
+                },
+                "required": ["mode"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_axis",
+            description="Create construction axis along an edge or perpendicular to face. Returns path to created axis. NOTE: Two-points mode not supported due to Fusion API limitations - create a sketch line first and use edge mode instead.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["edge", "perpendicular"],
+                        "description": "Construction method: 'edge' = along existing edge, 'perpendicular' = normal to face at point"
+                    },
+                    "edge": {
+                        "type": "string",
+                        "description": "Path to edge (for edge mode). Format: 'root/bRepBodies/Body1/edges/0'"
+                    },
+                    "face": {
+                        "type": "string",
+                        "description": "Path to face (for perpendicular mode). Format: 'root/bRepBodies/Body1/faces/0'"
+                    },
+                    "point": {
+                        "type": "object",
+                        "description": "Point on axis (for perpendicular mode)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        }
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Optional name for the axis (default: 'ConstructionAxis')"
+                    }
+                },
+                "required": ["mode"]
+            }
+        ),
+        types.Tool(
+            name="fusion_move_body",
+            description="Move a body by a translation vector. Non-destructive transform operation that creates a timeline feature.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "body_path": {
+                        "type": "string",
+                        "description": "Path to body to move. Format: 'root/bRepBodies/BodyName'"
+                    },
+                    "vector": {
+                        "type": "object",
+                        "description": "Translation vector (x, y, z) in cm",
+                        "properties": {
+                            "x": {"type": "number", "description": "X displacement in cm"},
+                            "y": {"type": "number", "description": "Y displacement in cm"},
+                            "z": {"type": "number", "description": "Z displacement in cm"}
+                        },
+                        "required": ["x", "y", "z"]
+                    }
+                },
+                "required": ["body_path", "vector"]
+            }
+        ),
+        types.Tool(
+            name="fusion_rotate_body",
+            description="Rotate a body around an axis by a specified angle. Non-destructive transform operation that creates a timeline feature.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "body_path": {
+                        "type": "string",
+                        "description": "Path to body to rotate. Format: 'root/bRepBodies/BodyName'"
+                    },
+                    "axis": {
+                        "type": "object",
+                        "description": "Rotation axis definition",
+                        "properties": {
+                            "origin": {
+                                "type": "object",
+                                "description": "Point on the rotation axis",
+                                "properties": {
+                                    "x": {"type": "number"},
+                                    "y": {"type": "number"},
+                                    "z": {"type": "number"}
+                                },
+                                "required": ["x", "y", "z"]
+                            },
+                            "direction": {
+                                "type": "object",
+                                "description": "Axis direction vector (will be normalized)",
+                                "properties": {
+                                    "x": {"type": "number"},
+                                    "y": {"type": "number"},
+                                    "z": {"type": "number"}
+                                },
+                                "required": ["x", "y", "z"]
+                            }
+                        },
+                        "required": ["origin", "direction"]
+                    },
+                    "angle": {
+                        "type": "number",
+                        "description": "Rotation angle in degrees (positive = counter-clockwise when looking along axis direction)"
+                    }
+                },
+                "required": ["body_path", "axis", "angle"]
+            }
+        ),
+        types.Tool(
+            name="fusion_mirror_body",
+            description="Mirror a body across a plane. Creates a mirrored copy. Non-destructive operation that creates a timeline feature.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "body_path": {
+                        "type": "string",
+                        "description": "Path to body to mirror. Format: 'root/bRepBodies/BodyName'"
+                    },
+                    "mirror_plane": {
+                        "type": "string",
+                        "description": "Path to mirror plane. Can be construction plane (e.g., 'root/constructionPlanes/XY Plane') or 'XY'/'XZ'/'YZ' for built-in planes"
+                    }
+                },
+                "required": ["body_path", "mirror_plane"]
+            }
         )
     ]
 
@@ -279,7 +618,14 @@ async def handle_call_tool(
         'fusion_measure_distance': 'measure_distance',
         'fusion_measure_angle': 'measure_angle',
         'fusion_get_edge_info': 'get_edge_info',
-        'fusion_get_face_info': 'get_face_info'
+        'fusion_get_face_info': 'get_face_info',
+        'fusion_find_edges_by_criteria': 'find_edges_by_criteria',
+        'fusion_find_faces_by_criteria': 'find_faces_by_criteria',
+        'fusion_create_plane': 'create_plane',
+        'fusion_create_axis': 'create_axis',
+        'fusion_move_body': 'move_body',
+        'fusion_rotate_body': 'rotate_body',
+        'fusion_mirror_body': 'mirror_body'
     }
 
     if name not in operation_map:
@@ -351,7 +697,7 @@ async def main():
             write_stream,
             InitializationOptions(
                 server_name="fusion360-mcp",
-                server_version="0.4.0",
+                server_version="0.7.1",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},
