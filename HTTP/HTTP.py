@@ -2079,6 +2079,268 @@ def _handle_sketch_add_dimension(params):
             'traceback': traceback.format_exc()
         }
 
+def _handle_get_features(params):
+    """Get all features from the timeline"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get component path if specified, default to root
+        component = root
+        component_path = params.get('component_path', 'root')
+
+        if component_path != 'root':
+            # Parse component path
+            parts = component_path.split('/')
+            if len(parts) > 2 and parts[1] in ['children', 'occurrences']:
+                comp_name = parts[2]
+                for occ in root.occurrences:
+                    if occ.name == comp_name:
+                        component = occ.component
+                        break
+
+        features_list = []
+
+        # Iterate through all feature types
+        for i in range(component.features.count):
+            feature = component.features.item(i)
+
+            # Get feature type name
+            feature_type = type(feature).__name__.replace('Feature', '')
+
+            # Get timeline object for this feature
+            timeline_obj = None
+            for j in range(design.timeline.count):
+                tl = design.timeline.item(j)
+                if tl.entity == feature:
+                    timeline_obj = tl
+                    break
+
+            feature_info = {
+                'index': i,
+                'name': feature.name,
+                'type': feature_type,
+                'isSuppressed': feature.isSuppressed if hasattr(feature, 'isSuppressed') else None,
+                'timelineIndex': timeline_obj.index if timeline_obj else None,
+                'timelinePosition': timeline_obj.index if timeline_obj else None,
+                'isRolledBack': timeline_obj.isRolledBack if timeline_obj else None
+            }
+
+            # Add health state if available
+            if hasattr(feature, 'healthState'):
+                feature_info['healthState'] = 'healthy' if feature.healthState == 0 else 'warning' if feature.healthState == 1 else 'error'
+
+            # Add feature-specific properties
+            if hasattr(feature, 'operation'):
+                feature_info['operation'] = ['NewBodyFeatureOperation', 'JoinFeatureOperation', 'CutFeatureOperation', 'IntersectFeatureOperation'][feature.operation]
+
+            features_list.append(feature_info)
+
+        return {
+            'status': 'success',
+            'data': {
+                'component': component.name,
+                'component_path': component_path,
+                'feature_count': len(features_list),
+                'timeline_marker': design.timeline.markerPosition,
+                'features': features_list
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to get features: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_suppress_feature(params):
+    """Suppress or unsuppress a feature in the timeline"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get component
+        component = root
+        component_path = params.get('component_path', 'root')
+
+        if component_path != 'root':
+            parts = component_path.split('/')
+            if len(parts) > 2 and parts[1] in ['children', 'occurrences']:
+                comp_name = parts[2]
+                for occ in root.occurrences:
+                    if occ.name == comp_name:
+                        component = occ.component
+                        break
+
+        # Get feature by index or name
+        feature = None
+        feature_identifier = params.get('feature_index')
+        if feature_identifier is not None:
+            # Get by index
+            if feature_identifier < component.features.count:
+                feature = component.features.item(feature_identifier)
+        else:
+            # Get by name
+            feature_name = params.get('feature_name')
+            if feature_name:
+                for i in range(component.features.count):
+                    feat = component.features.item(i)
+                    if feat.name == feature_name:
+                        feature = feat
+                        break
+
+        if not feature:
+            return {'status': 'error', 'message': 'Feature not found'}
+
+        # Check if feature supports suppression
+        if not hasattr(feature, 'isSuppressed'):
+            return {'status': 'error', 'message': f'Feature "{feature.name}" does not support suppression'}
+
+        # Set suppression state
+        suppress = params.get('suppress', True)
+        feature.isSuppressed = suppress
+
+        return {
+            'status': 'success',
+            'data': {
+                'feature_name': feature.name,
+                'feature_type': type(feature).__name__.replace('Feature', ''),
+                'isSuppressed': feature.isSuppressed,
+                'healthState': 'healthy' if hasattr(feature, 'healthState') and feature.healthState == 0 else 'warning' if hasattr(feature, 'healthState') and feature.healthState == 1 else 'error'
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to suppress feature: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+def _handle_edit_feature(params):
+    """Edit feature parameters"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get component
+        component = root
+        component_path = params.get('component_path', 'root')
+
+        if component_path != 'root':
+            parts = component_path.split('/')
+            if len(parts) > 2 and parts[1] in ['children', 'occurrences']:
+                comp_name = parts[2]
+                for occ in root.occurrences:
+                    if occ.name == comp_name:
+                        component = occ.component
+                        break
+
+        # Get feature by index or name
+        feature = None
+        feature_identifier = params.get('feature_index')
+        if feature_identifier is not None:
+            if feature_identifier < component.features.count:
+                feature = component.features.item(feature_identifier)
+        else:
+            feature_name = params.get('feature_name')
+            if feature_name:
+                for i in range(component.features.count):
+                    feat = component.features.item(i)
+                    if feat.name == feature_name:
+                        feature = feat
+                        break
+
+        if not feature:
+            return {'status': 'error', 'message': 'Feature not found'}
+
+        # Get parameters to edit
+        edits = params.get('edits', {})
+        applied_edits = {}
+
+        # Common editable properties
+        if 'name' in edits:
+            feature.name = edits['name']
+            applied_edits['name'] = feature.name
+
+        # Feature-specific edits using parameters
+        feature_type = type(feature).__name__
+
+        # ExtrudeFeature
+        if 'ExtrudeFeature' in feature_type:
+            if 'distance' in edits:
+                extent = feature.extentDefinition
+                if hasattr(extent, 'distance') and hasattr(extent.distance, 'value'):
+                    extent.distance.value = edits['distance']
+                    applied_edits['distance'] = extent.distance.value
+
+            if 'taper_angle' in edits:
+                if hasattr(feature, 'taperAngle') and hasattr(feature.taperAngle, 'value'):
+                    feature.taperAngle.value = edits['taper_angle']
+                    applied_edits['taper_angle'] = feature.taperAngle.value
+
+        # RevolveFeature
+        elif 'RevolveFeature' in feature_type:
+            if 'angle' in edits:
+                if hasattr(feature, 'angle') and hasattr(feature.angle, 'value'):
+                    feature.angle.value = edits['angle']
+                    applied_edits['angle'] = feature.angle.value
+
+        # FilletFeature
+        elif 'FilletFeature' in feature_type:
+            if 'radius' in edits:
+                # Modify radius parameters
+                for i in range(feature.edgeSets.count):
+                    edge_set = feature.edgeSets.item(i)
+                    if hasattr(edge_set, 'radius') and hasattr(edge_set.radius, 'value'):
+                        edge_set.radius.value = edits['radius']
+                        applied_edits['radius'] = edge_set.radius.value
+                        break  # Only modify first edge set
+
+        # ChamferFeature
+        elif 'ChamferFeature' in feature_type:
+            if 'distance' in edits:
+                # ChamferFeature uses 'edgeSets', not 'chamferEdgeSets'
+                for i in range(feature.edgeSets.count):
+                    edge_set = feature.edgeSets.item(i)
+                    if hasattr(edge_set, 'distance') and hasattr(edge_set.distance, 'value'):
+                        edge_set.distance.value = edits['distance']
+                        applied_edits['distance'] = edge_set.distance.value
+                        break  # Only modify first edge set
+
+        return {
+            'status': 'success',
+            'data': {
+                'feature_name': feature.name,
+                'feature_type': feature_type.replace('Feature', ''),
+                'applied_edits': applied_edits,
+                'healthState': 'healthy' if hasattr(feature, 'healthState') and feature.healthState == 0 else 'warning'
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to edit feature: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
 def _handle_find_faces_by_criteria(params):
     """Find faces matching search criteria"""
     body, _ = _resolve_element_path(params['body_path'])
@@ -2538,6 +2800,12 @@ class MainThreadExecutor(adsk.core.CustomEventHandler):
                 result = _handle_sketch_add_constraint(event_args.get('params', {}))
             elif operation == 'sketch_add_dimension':
                 result = _handle_sketch_add_dimension(event_args.get('params', {}))
+            elif operation == 'get_features':
+                result = _handle_get_features(event_args.get('params', {}))
+            elif operation == 'suppress_feature':
+                result = _handle_suppress_feature(event_args.get('params', {}))
+            elif operation == 'edit_feature':
+                result = _handle_edit_feature(event_args.get('params', {}))
             else:
                 result = {'status': 'error', 'error': f'Unknown operation: {operation}'}
 
@@ -2630,7 +2898,8 @@ def run(context):
         _server_thread.start()
         
         ui.messageBox(
-            'Fusion Script Executor v5.6.0\n\n'
+            'Fusion Script Executor v5.7.0\n\n'
+            'NEW v5.7.0: Feature/Timeline tools - get features, suppress features, edit feature parameters\n'
             'NEW v5.6.0: Sketch constraints and dimensions - geometric constraints, parametric dimensions\n'
             'NEW v5.5.2: Added point tool to sketch tools\n'
             'FIXED v5.5.1: Arc response now returns working properties (start/end points, length)\n'

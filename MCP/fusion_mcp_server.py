@@ -1007,6 +1007,96 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": ["sketch_path", "dimension_type", "value"]
             }
+        ),
+        types.Tool(
+            name="fusion_get_features",
+            description="Get all features from the timeline with their properties. Returns feature list with names, types, suppression states, and timeline positions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "component_path": {
+                        "type": "string",
+                        "description": "Path to component (default: 'root'). Format: 'root' or 'root/children/ComponentName'",
+                        "default": "root"
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="fusion_suppress_feature",
+            description="Suppress or unsuppress a feature in the timeline. Suppressed features are skipped during regeneration.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "component_path": {
+                        "type": "string",
+                        "description": "Path to component (default: 'root')",
+                        "default": "root"
+                    },
+                    "feature_index": {
+                        "type": "integer",
+                        "description": "Feature index from fusion_get_features. Use either feature_index or feature_name."
+                    },
+                    "feature_name": {
+                        "type": "string",
+                        "description": "Feature name from fusion_get_features. Use either feature_index or feature_name."
+                    },
+                    "suppress": {
+                        "type": "boolean",
+                        "description": "True to suppress, false to unsuppress (default: true)",
+                        "default": True
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="fusion_edit_feature",
+            description="Edit feature parameters (distance, angle, radius, etc). Supports Extrude, Revolve, Fillet, and Chamfer features. CAUTION: May affect downstream features.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "component_path": {
+                        "type": "string",
+                        "description": "Path to component (default: 'root')",
+                        "default": "root"
+                    },
+                    "feature_index": {
+                        "type": "integer",
+                        "description": "Feature index from fusion_get_features"
+                    },
+                    "feature_name": {
+                        "type": "string",
+                        "description": "Feature name from fusion_get_features"
+                    },
+                    "edits": {
+                        "type": "object",
+                        "description": "Parameters to edit. Available parameters depend on feature type.",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "New feature name (works for all features)"
+                            },
+                            "distance": {
+                                "type": "number",
+                                "description": "Extrude distance or Chamfer distance in cm"
+                            },
+                            "taper_angle": {
+                                "type": "number",
+                                "description": "Extrude taper angle in radians"
+                            },
+                            "angle": {
+                                "type": "number",
+                                "description": "Revolve angle in radians"
+                            },
+                            "radius": {
+                                "type": "number",
+                                "description": "Fillet radius in cm"
+                            }
+                        }
+                    }
+                },
+                "required": ["edits"]
+            }
         )
     ]
 
@@ -1044,7 +1134,10 @@ async def handle_call_tool(
         'fusion_sketch_add_rectangle': 'sketch_add_rectangle',
         'fusion_sketch_add_point': 'sketch_add_point',
         'fusion_sketch_add_constraint': 'sketch_add_constraint',
-        'fusion_sketch_add_dimension': 'sketch_add_dimension'
+        'fusion_sketch_add_dimension': 'sketch_add_dimension',
+        'fusion_get_features': 'get_features',
+        'fusion_suppress_feature': 'suppress_feature',
+        'fusion_edit_feature': 'edit_feature'
     }
 
     if name not in operation_map:
@@ -1116,7 +1209,7 @@ async def main():
             write_stream,
             InitializationOptions(
                 server_name="fusion360-mcp",
-                server_version="0.10.0",
+                server_version="0.11.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},
