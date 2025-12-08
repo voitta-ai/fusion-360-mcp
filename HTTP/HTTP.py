@@ -106,6 +106,442 @@ def _handle_set_camera(params):
 
     return {'status': 'success', 'message': 'Camera updated'}
 
+def _resolve_element_path(path):
+    """
+    Resolve element path to object
+    Returns: (element, element_type)
+    """
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        raise ValueError('No active design')
+
+    root = design.rootComponent
+    parts = path.split('/')
+
+    if len(parts) == 0 or parts[0] != 'root':
+        raise ValueError('Path must start with "root"')
+
+    current = root
+    i = 1
+
+    while i < len(parts):
+        part = parts[i]
+
+        # Accept both 'bodies' and 'bRepBodies' for body paths
+        if part in ['bodies', 'bRepBodies']:
+            if i + 1 >= len(parts):
+                raise ValueError('Body name missing')
+            body_name = parts[i + 1]
+
+            # Debug: List available bodies
+            available_bodies = [body.name for body in current.bRepBodies]
+
+            for body in current.bRepBodies:
+                if body.name == body_name:
+                    return (body, 'BRepBody')
+
+            # Enhanced error message with available bodies
+            raise ValueError(f'Body "{body_name}" not found. Available: {available_bodies}')
+
+        # Accept both 'occurrences' and 'children' for occurrence paths
+        elif part in ['occurrences', 'children']:
+            if i + 1 >= len(parts):
+                raise ValueError('Occurrence name missing')
+            occ_name = parts[i + 1]
+
+            # Debug: List available occurrences
+            available_occs = [occ.name for occ in current.occurrences]
+
+            found = False
+            for occ in current.occurrences:
+                if occ.name == occ_name:
+                    if i + 2 >= len(parts):
+                        return (occ, 'Occurrence')
+                    current = occ.component
+                    i += 2
+                    found = True
+                    break
+
+            if not found:
+                # Enhanced error message with available occurrences
+                raise ValueError(f'Occurrence "{occ_name}" not found. Available: {available_occs}')
+
+            # Skip the i += 1 at the end since we already incremented by 2
+            continue
+
+        i += 1
+
+    return (root, 'Component')
+
+def _resolve_geometry_path(path):
+    """
+    Resolve geometry path (with edges/faces) to object
+    Returns: (element, element_type)
+    """
+    parts = path.split('/')
+
+    # Check if this is a geometry path (ends with edges/X or faces/X)
+    if len(parts) >= 2:
+        geo_category = parts[-2]
+
+        if geo_category in ['edges', 'faces', 'vertices']:
+            # Get parent element
+            parent_path = '/'.join(parts[:-2])
+            parent, parent_type = _resolve_element_path(parent_path)
+
+            if parent_type != 'BRepBody':
+                raise ValueError(f'Geometry parent must be a body, got {parent_type}')
+
+            geo_index = int(parts[-1])
+
+            if geo_category == 'edges':
+                if geo_index < 0 or geo_index >= parent.edges.count:
+                    raise ValueError(f'Edge index {geo_index} out of range (0-{parent.edges.count-1})')
+                return (parent.edges.item(geo_index), 'BRepEdge')
+
+            elif geo_category == 'faces':
+                if geo_index < 0 or geo_index >= parent.faces.count:
+                    raise ValueError(f'Face index {geo_index} out of range (0-{parent.faces.count-1})')
+                return (parent.faces.item(geo_index), 'BRepFace')
+
+            elif geo_category == 'vertices':
+                if geo_index < 0 or geo_index >= parent.vertices.count:
+                    raise ValueError(f'Vertex index {geo_index} out of range (0-{parent.vertices.count-1})')
+                return (parent.vertices.item(geo_index), 'BRepVertex')
+
+    # Not a geometry path, resolve as element
+    return _resolve_element_path(path)
+
+def _handle_measure_distance(params):
+    """Measure distance between entities"""
+    import math
+
+    mode = params.get('mode', 'points')
+
+    if mode == 'points':
+        p1 = params['point1']
+        p2 = params['point2']
+        point1 = adsk.core.Point3D.create(p1['x'], p1['y'], p1['z'])
+        point2 = adsk.core.Point3D.create(p2['x'], p2['y'], p2['z'])
+
+        distance = point1.distanceTo(point2)
+
+        return {
+            'status': 'success',
+            'data': {
+                'distance': distance,
+                'point1': {'x': point1.x, 'y': point1.y, 'z': point1.z},
+                'point2': {'x': point2.x, 'y': point2.y, 'z': point2.z},
+                'vector': {
+                    'x': point2.x - point1.x,
+                    'y': point2.y - point1.y,
+                    'z': point2.z - point1.z
+                }
+            }
+        }
+
+    elif mode == 'edges':
+        edge1, _ = _resolve_geometry_path(params['edge1'])
+        edge2, _ = _resolve_geometry_path(params['edge2'])
+
+        # Get start/end points for distance calculation - handle different curve types
+        geom1 = edge1.geometry
+        geom2 = edge2.geometry
+
+        # Get points for edge 1
+        if hasattr(geom1, 'startPoint') and hasattr(geom1, 'endPoint'):
+            p1_start = geom1.startPoint
+            p1_end = geom1.endPoint
+        else:
+            # For curves without direct access (Circle, Ellipse, etc.), use evaluator
+            evaluator1 = geom1.evaluator
+            extents1 = evaluator1.getParameterExtents()
+            success, p1_start = evaluator1.getPointAtParameter(extents1[1])  # Start param
+            success, p1_end = evaluator1.getPointAtParameter(extents1[2])    # End param
+
+        # Get points for edge 2
+        if hasattr(geom2, 'startPoint') and hasattr(geom2, 'endPoint'):
+            p2_start = geom2.startPoint
+            p2_end = geom2.endPoint
+        else:
+            # For curves without direct access (Circle, Ellipse, etc.), use evaluator
+            evaluator2 = geom2.evaluator
+            extents2 = evaluator2.getParameterExtents()
+            success, p2_start = evaluator2.getPointAtParameter(extents2[1])  # Start param
+            success, p2_end = evaluator2.getPointAtParameter(extents2[2])    # End param
+
+        # Find minimum distance between the four point combinations
+        distances = [
+            p1_start.distanceTo(p2_start),
+            p1_start.distanceTo(p2_end),
+            p1_end.distanceTo(p2_start),
+            p1_end.distanceTo(p2_end)
+        ]
+        min_dist = min(distances)
+
+        return {
+            'status': 'success',
+            'data': {
+                'distance': min_dist,
+                'edge1_length': edge1.length,
+                'edge2_length': edge2.length
+            }
+        }
+
+    else:
+        return {'status': 'error', 'message': f'Unsupported mode: {mode}'}
+
+def _handle_measure_angle(params):
+    """Measure angle between entities"""
+    import math
+
+    mode = params.get('mode', 'edges')
+    units = params.get('units', 'degrees')
+
+    if mode == 'edges':
+        edge1, _ = _resolve_geometry_path(params['edge1'])
+        edge2, _ = _resolve_geometry_path(params['edge2'])
+
+        # Get edge direction vectors
+        geom1 = edge1.geometry
+        geom2 = edge2.geometry
+
+        # Get start/end points - handle different curve types
+        # Curves with direct startPoint/endPoint access
+        if hasattr(geom1, 'startPoint') and hasattr(geom1, 'endPoint'):
+            start1 = geom1.startPoint
+            end1 = geom1.endPoint
+        else:
+            # For curves without direct access (Circle, Ellipse, etc.), use evaluator
+            evaluator1 = geom1.evaluator
+            extents1 = evaluator1.getParameterExtents()
+            success, start1 = evaluator1.getPointAtParameter(extents1[1])  # Start param
+            success, end1 = evaluator1.getPointAtParameter(extents1[2])    # End param
+
+        if hasattr(geom2, 'startPoint') and hasattr(geom2, 'endPoint'):
+            start2 = geom2.startPoint
+            end2 = geom2.endPoint
+        else:
+            # For curves without direct access (Circle, Ellipse, etc.), use evaluator
+            evaluator2 = geom2.evaluator
+            extents2 = evaluator2.getParameterExtents()
+            success, start2 = evaluator2.getPointAtParameter(extents2[1])  # Start param
+            success, end2 = evaluator2.getPointAtParameter(extents2[2])    # End param
+
+        # Create direction vectors
+        vec1 = start1.vectorTo(end1)
+        vec2 = start2.vectorTo(end2)
+
+        # Handle closed curves (like full circles) - use tangent at midpoint instead
+        if vec1.length < 0.001:  # Closed curve
+            evaluator1 = geom1.evaluator
+            extents1 = evaluator1.getParameterExtents()
+            mid_param1 = (extents1[1] + extents1[2]) / 2.0
+            success, vec1 = evaluator1.getTangent(mid_param1)
+
+        if vec2.length < 0.001:  # Closed curve
+            evaluator2 = geom2.evaluator
+            extents2 = evaluator2.getParameterExtents()
+            mid_param2 = (extents2[1] + extents2[2]) / 2.0
+            success, vec2 = evaluator2.getTangent(mid_param2)
+
+        vec1.normalize()
+        vec2.normalize()
+
+        angle_rad = vec1.angleTo(vec2)
+        angle_deg = math.degrees(angle_rad)
+
+        return {
+            'status': 'success',
+            'data': {
+                'angle': angle_deg if units == 'degrees' else angle_rad,
+                'units': units,
+                'vector1': {'x': vec1.x, 'y': vec1.y, 'z': vec1.z},
+                'vector2': {'x': vec2.x, 'y': vec2.y, 'z': vec2.z}
+            }
+        }
+
+    elif mode == 'faces':
+        face1, _ = _resolve_geometry_path(params['face1'])
+        face2, _ = _resolve_geometry_path(params['face2'])
+
+        # Get face normals
+        eval1 = face1.evaluator
+        eval2 = face2.evaluator
+
+        # Get normals at face centers
+        result1, param_point1 = eval1.getParametersAtPoint(face1.centroid)
+        result2, normal1 = eval1.getNormalAtPoint(param_point1)
+
+        result1, param_point2 = eval2.getParametersAtPoint(face2.centroid)
+        result2, normal2 = eval2.getNormalAtPoint(param_point2)
+
+        angle_rad = normal1.angleTo(normal2)
+        angle_deg = math.degrees(angle_rad)
+
+        return {
+            'status': 'success',
+            'data': {
+                'angle': angle_deg if units == 'degrees' else angle_rad,
+                'units': units,
+                'type': 'dihedral',
+                'normal1': {'x': normal1.x, 'y': normal1.y, 'z': normal1.z},
+                'normal2': {'x': normal2.x, 'y': normal2.y, 'z': normal2.z}
+            }
+        }
+
+    else:
+        return {'status': 'error', 'message': f'Unsupported mode: {mode}'}
+
+def _get_edge_info(edge, index):
+    """Get detailed info about an edge"""
+    geom = edge.geometry
+
+    info = {
+        'index': index,
+        'length': edge.length
+    }
+
+    # Get start/end points - handle different curve types
+    curve_type = geom.curveType
+
+    # Curves with direct startPoint/endPoint access
+    if hasattr(geom, 'startPoint') and hasattr(geom, 'endPoint'):
+        start = geom.startPoint
+        end = geom.endPoint
+    else:
+        # For curves without direct access (Circle, Ellipse, etc.), use evaluator
+        evaluator = geom.evaluator
+        success, start = evaluator.getPointAtParameter(evaluator.getParameterExtents()[1])  # Start param
+        success, end = evaluator.getPointAtParameter(evaluator.getParameterExtents()[2])    # End param
+
+    info['start_point'] = {'x': start.x, 'y': start.y, 'z': start.z}
+    info['end_point'] = {'x': end.x, 'y': end.y, 'z': end.z}
+
+    # Direction vector (for curves that aren't closed)
+    if start.distanceTo(end) > 0.001:  # Not a closed curve
+        direction = start.vectorTo(end)
+        direction.normalize()
+        info['direction'] = {'x': direction.x, 'y': direction.y, 'z': direction.z}
+    else:
+        info['direction'] = None  # Closed curve (like full circle)
+
+    # Detailed curve type info
+    if curve_type == adsk.core.Curve3DTypes.Line3DCurveType:
+        info['curve_type'] = 'line'
+    elif curve_type == adsk.core.Curve3DTypes.Circle3DCurveType:
+        info['curve_type'] = 'circle'
+        info['radius'] = geom.radius
+    elif curve_type == adsk.core.Curve3DTypes.Arc3DCurveType:
+        info['curve_type'] = 'arc'
+        info['radius'] = geom.radius
+    elif curve_type == adsk.core.Curve3DTypes.Ellipse3DCurveType:
+        info['curve_type'] = 'ellipse'
+        info['majorRadius'] = geom.majorRadius
+        info['minorRadius'] = geom.minorRadius
+    elif curve_type == adsk.core.Curve3DTypes.EllipticalArc3DCurveType:
+        info['curve_type'] = 'elliptical_arc'
+        info['majorRadius'] = geom.majorRadius
+        info['minorRadius'] = geom.minorRadius
+    elif curve_type == adsk.core.Curve3DTypes.NurbsCurve3DCurveType:
+        info['curve_type'] = 'nurbs'
+        info['degree'] = geom.degree
+    else:
+        info['curve_type'] = 'other'
+
+    return info
+
+def _handle_get_edge_info(params):
+    """Get edge information"""
+    if params.get('list_all'):
+        body, _ = _resolve_element_path(params['body_path'])
+
+        edges = []
+        for i in range(body.edges.count):
+            edge = body.edges.item(i)
+            edges.append(_get_edge_info(edge, i))
+
+        return {
+            'status': 'success',
+            'data': {
+                'body': body.name,
+                'edge_count': len(edges),
+                'edges': edges
+            }
+        }
+    else:
+        edge, _ = _resolve_geometry_path(params['path'])
+        index = int(params['path'].split('/')[-1])
+
+        return {
+            'status': 'success',
+            'data': _get_edge_info(edge, index)
+        }
+
+def _get_face_info(face, index):
+    """Get detailed info about a face"""
+    geom = face.geometry
+
+    info = {
+        'index': index,
+        'area': face.area
+    }
+
+    # Centroid
+    try:
+        centroid = face.centroid
+        info['centroid'] = {'x': centroid.x, 'y': centroid.y, 'z': centroid.z}
+    except:
+        info['centroid'] = None
+
+    # Surface type
+    surface_type = geom.surfaceType
+    if surface_type == adsk.core.SurfaceTypes.PlaneSurfaceType:
+        info['surface_type'] = 'planar'
+        normal = geom.normal
+        info['normal'] = {'x': normal.x, 'y': normal.y, 'z': normal.z}
+    elif surface_type == adsk.core.SurfaceTypes.CylinderSurfaceType:
+        info['surface_type'] = 'cylindrical'
+        info['radius'] = geom.radius
+    elif surface_type == adsk.core.SurfaceTypes.ConeSurfaceType:
+        info['surface_type'] = 'conical'
+    elif surface_type == adsk.core.SurfaceTypes.SphereSurfaceType:
+        info['surface_type'] = 'spherical'
+        info['radius'] = geom.radius
+    else:
+        info['surface_type'] = 'other'
+
+    return info
+
+def _handle_get_face_info(params):
+    """Get face information"""
+    if params.get('list_all'):
+        body, _ = _resolve_element_path(params['body_path'])
+
+        faces = []
+        for i in range(body.faces.count):
+            face = body.faces.item(i)
+            faces.append(_get_face_info(face, i))
+
+        return {
+            'status': 'success',
+            'data': {
+                'body': body.name,
+                'face_count': len(faces),
+                'faces': faces
+            }
+        }
+    else:
+        face, _ = _resolve_geometry_path(params['path'])
+        index = int(params['path'].split('/')[-1])
+
+        return {
+            'status': 'success',
+            'data': _get_face_info(face, index)
+        }
+
 def _handle_set_element_properties(params):
     """Set properties (visibility, grounding) for design elements"""
     app = adsk.core.Application.get()
@@ -138,17 +574,19 @@ def _handle_set_element_properties(params):
         while i < len(parts):
             part = parts[i]
 
-            if part == 'bodies':
+            # Accept both 'bodies' and 'bRepBodies'
+            if part in ['bodies', 'bRepBodies']:
                 # Next part is body name
                 if i + 1 >= len(parts):
                     return {'status': 'error', 'message': 'Body name missing after "bodies"'}
                 body_name = parts[i + 1]
+                available_bodies = [body.name for body in current.bRepBodies]
                 for body in current.bRepBodies:
                     if body.name == body_name:
                         element = body
                         break
                 if not element:
-                    return {'status': 'error', 'message': f'Body "{body_name}" not found'}
+                    return {'status': 'error', 'message': f'Body "{body_name}" not found. Available: {available_bodies}'}
                 break
 
             elif part == 'sketches':
@@ -175,17 +613,19 @@ def _handle_set_element_properties(params):
                     return {'status': 'error', 'message': f'Mesh body "{mesh_name}" not found'}
                 break
 
-            elif part == 'occurrences':
+            # Accept both 'occurrences' and 'children'
+            elif part in ['occurrences', 'children']:
                 if i + 1 >= len(parts):
                     return {'status': 'error', 'message': 'Occurrence name missing'}
                 occ_name = parts[i + 1]
+                available_occs = [occ.name for occ in current.occurrences]
                 found_occ = None
                 for occ in current.occurrences:
                     if occ.name == occ_name:
                         found_occ = occ
                         break
                 if not found_occ:
-                    return {'status': 'error', 'message': f'Occurrence "{occ_name}" not found'}
+                    return {'status': 'error', 'message': f'Occurrence "{occ_name}" not found. Available: {available_occs}'}
 
                 # If this is the last element, we're targeting the occurrence itself
                 if i + 2 >= len(parts):
@@ -195,6 +635,7 @@ def _handle_set_element_properties(params):
                 # Otherwise, continue navigating into the occurrence's component
                 current = found_occ.component
                 i += 2
+                # Don't increment i again at the end of the while loop
                 continue
 
             elif part == 'constructionPlanes':
@@ -495,6 +936,14 @@ class MainThreadExecutor(adsk.core.CustomEventHandler):
                 result = _handle_get_tree(event_args.get('params', {}))
             elif operation == 'set_element_properties':
                 result = _handle_set_element_properties(event_args.get('params', {}))
+            elif operation == 'measure_distance':
+                result = _handle_measure_distance(event_args.get('params', {}))
+            elif operation == 'measure_angle':
+                result = _handle_measure_angle(event_args.get('params', {}))
+            elif operation == 'get_edge_info':
+                result = _handle_get_edge_info(event_args.get('params', {}))
+            elif operation == 'get_face_info':
+                result = _handle_get_face_info(event_args.get('params', {}))
             else:
                 result = {'status': 'error', 'error': f'Unknown operation: {operation}'}
 
@@ -587,9 +1036,11 @@ def run(context):
         _server_thread.start()
         
         ui.messageBox(
-            'Fusion Script Executor v4.1\n\n'
-            'Native operations: screenshot, camera, tree, visibility/grounding\n'
-            'All operations execute on Fusion\'s main thread!\n\n'
+            'Fusion Script Executor v5.0\n\n'
+            'NEW: Measurement tools (distance, angle)\n'
+            'NEW: Edge/face inspection with full geometry info\n'
+            'Existing: screenshot, camera, tree, visibility/grounding\n\n'
+            'All operations execute on Fusion\'s main thread!\n'
             'Endpoint: http://localhost:8080'
         )
         

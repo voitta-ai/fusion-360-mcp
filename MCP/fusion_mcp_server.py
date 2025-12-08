@@ -125,7 +125,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "Hierarchical path to element. Format: 'root/[category]/[name]' where category is: bodies, sketches, meshBodies, occurrences, constructionPlanes, constructionAxes, constructionPoints. For nested elements: 'root/occurrences/OccName/bodies/BodyName'"
+                        "description": "Hierarchical path to element. Accepts paths from fusion_get_tree output. Format: 'root/[category]/[name]' where category is: bodies|bRepBodies, sketches, meshBodies, occurrences|children, constructionPlanes, constructionAxes, constructionPoints. For nested: 'root/children/OccName/bRepBodies/BodyName'"
                     },
                     "isVisible": {
                         "type": "boolean",
@@ -137,6 +137,127 @@ async def handle_list_tools() -> list[types.Tool]:
                     }
                 },
                 "required": ["path"]
+            }
+        ),
+        types.Tool(
+            name="fusion_measure_distance",
+            description="Measure distance between two entities (points, edges). Returns precise measurements with coordinates.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["points", "edges"],
+                        "description": "Type of measurement"
+                    },
+                    "point1": {
+                        "type": "object",
+                        "description": "First point coordinates (for mode='points')",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        }
+                    },
+                    "point2": {
+                        "type": "object",
+                        "description": "Second point coordinates (for mode='points')",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        }
+                    },
+                    "edge1": {
+                        "type": "string",
+                        "description": "Path to first edge (for mode='edges'). Format: 'root/bRepBodies/BodyName/edges/0' or from fusion_get_tree + '/edges/INDEX'"
+                    },
+                    "edge2": {
+                        "type": "string",
+                        "description": "Path to second edge (for mode='edges'). Format: 'root/bRepBodies/BodyName/edges/1' or from fusion_get_tree + '/edges/INDEX'"
+                    }
+                },
+                "required": ["mode"]
+            }
+        ),
+        types.Tool(
+            name="fusion_measure_angle",
+            description="Measure angle between two edges or faces. Returns angle in degrees or radians.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["edges", "faces"],
+                        "description": "Type of angle measurement"
+                    },
+                    "edge1": {
+                        "type": "string",
+                        "description": "Path to first edge (for edges mode). Format: 'root/bRepBodies/BodyName/edges/0' or from fusion_get_tree + '/edges/INDEX'"
+                    },
+                    "edge2": {
+                        "type": "string",
+                        "description": "Path to second edge (for edges mode). Format: 'root/bRepBodies/BodyName/edges/1' or from fusion_get_tree + '/edges/INDEX'"
+                    },
+                    "face1": {
+                        "type": "string",
+                        "description": "Path to first face (for faces mode). Format: 'root/bRepBodies/BodyName/faces/0' or from fusion_get_tree + '/faces/INDEX'"
+                    },
+                    "face2": {
+                        "type": "string",
+                        "description": "Path to second face (for faces mode). Format: 'root/bRepBodies/BodyName/faces/1' or from fusion_get_tree + '/faces/INDEX'"
+                    },
+                    "units": {
+                        "type": "string",
+                        "enum": ["degrees", "radians"],
+                        "default": "degrees"
+                    }
+                },
+                "required": ["mode"]
+            }
+        ),
+        types.Tool(
+            name="fusion_get_edge_info",
+            description="Get detailed information about edge(s): length, start/end points, direction, curve type. Can list all edges on a body with indices.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to specific edge (e.g., 'root/bRepBodies/Body1/edges/5'). Use path from fusion_get_tree + '/edges/INDEX'"
+                    },
+                    "body_path": {
+                        "type": "string",
+                        "description": "Path to body (when list_all=true). Example: 'root/bRepBodies/WingBody' or 'root/children/Comp1/bRepBodies/Body1'"
+                    },
+                    "list_all": {
+                        "type": "boolean",
+                        "description": "If true, list all edges on the body with their indices",
+                        "default": False
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="fusion_get_face_info",
+            description="Get detailed information about face(s): area, normal vector, center point, surface type. Can list all faces on a body with indices.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Path to specific face (e.g., 'root/bRepBodies/Body1/faces/3'). Use path from fusion_get_tree + '/faces/INDEX'"
+                    },
+                    "body_path": {
+                        "type": "string",
+                        "description": "Path to body (when list_all=true). Example: 'root/bRepBodies/WingBody' or 'root/children/Comp1/bRepBodies/Body1'"
+                    },
+                    "list_all": {
+                        "type": "boolean",
+                        "description": "If true, list all faces on the body with their indices",
+                        "default": False
+                    }
+                }
             }
         )
     ]
@@ -154,7 +275,11 @@ async def handle_call_tool(
         'fusion_get_camera': 'get_camera',
         'fusion_set_camera': 'set_camera',
         'fusion_get_tree': 'get_tree',
-        'fusion_set_element_properties': 'set_element_properties'
+        'fusion_set_element_properties': 'set_element_properties',
+        'fusion_measure_distance': 'measure_distance',
+        'fusion_measure_angle': 'measure_angle',
+        'fusion_get_edge_info': 'get_edge_info',
+        'fusion_get_face_info': 'get_face_info'
     }
 
     if name not in operation_map:
@@ -226,7 +351,7 @@ async def main():
             write_stream,
             InitializationOptions(
                 server_name="fusion360-mcp",
-                server_version="0.3.0",
+                server_version="0.4.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},
