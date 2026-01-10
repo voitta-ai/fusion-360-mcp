@@ -1388,6 +1388,217 @@ def _handle_boolean_operation(params):
             'traceback': traceback.format_exc()
         }
 
+def _handle_create_extrude(params):
+    """Create an extrusion feature from a sketch profile"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get sketch
+        sketch_path = params['sketch_path']
+        sketch_name = sketch_path.split('/')[-1]
+
+        sketch = None
+        for s in root.sketches:
+            if s.name == sketch_name:
+                sketch = s
+                break
+
+        if sketch is None:
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+
+        # Get profiles from sketch
+        if sketch.profiles.count == 0:
+            return {'status': 'error', 'message': f'No closed profiles found in sketch "{sketch_name}"'}
+
+        # Get profile index (-1 means all profiles)
+        profile_index = params.get('profile_index', 0)
+
+        if profile_index == -1:
+            # Use all profiles
+            profiles = adsk.core.ObjectCollection.create()
+            for i in range(sketch.profiles.count):
+                profiles.add(sketch.profiles.item(i))
+            profile = profiles
+        else:
+            if profile_index >= sketch.profiles.count:
+                return {
+                    'status': 'error',
+                    'message': f'Profile index {profile_index} out of range. Sketch has {sketch.profiles.count} profile(s)'
+                }
+            profile = sketch.profiles.item(profile_index)
+
+        # Get parameters
+        extent_type = params.get('extent_type', 'distance')
+        direction = params.get('direction', 'one_side')
+        distance = params.get('distance', 1.0)  # in cm
+        distance_two = params.get('distance_two', distance)
+        taper_angle = params.get('taper_angle', 0)  # in degrees
+        taper_angle_two = params.get('taper_angle_two', 0)
+        operation = params.get('operation', 'new_body')
+
+        # Map operation to FeatureOperations enum
+        operation_map = {
+            'new_body': adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
+            'join': adsk.fusion.FeatureOperations.JoinFeatureOperation,
+            'cut': adsk.fusion.FeatureOperations.CutFeatureOperation,
+            'intersect': adsk.fusion.FeatureOperations.IntersectFeatureOperation,
+            'new_component': adsk.fusion.FeatureOperations.NewComponentFeatureOperation
+        }
+
+        if operation not in operation_map:
+            return {
+                'status': 'error',
+                'message': f'Invalid operation: {operation}. Must be one of: {list(operation_map.keys())}'
+            }
+
+        feature_operation = operation_map[operation]
+
+        # Create extrude features collection
+        extrude_features = root.features.extrudeFeatures
+
+        # Create extrude input
+        extrude_input = extrude_features.createInput(profile, feature_operation)
+
+        # Convert taper angles to radians
+        import math
+        taper_rad = math.radians(taper_angle)
+        taper_rad_two = math.radians(taper_angle_two)
+
+        # Set extent based on type and direction
+        if extent_type == 'distance':
+            distance_value = adsk.core.ValueInput.createByReal(distance)
+            taper_value = adsk.core.ValueInput.createByReal(taper_rad)
+            taper_value_two = adsk.core.ValueInput.createByReal(taper_rad_two)
+
+            if direction == 'symmetric':
+                # Symmetric extrusion
+                # setSymmetricExtent(distance, isFullLength) - no direct taper param
+                extrude_input.setSymmetricExtent(distance_value, True)
+                # Set taper after if needed (through extentOne)
+                if taper_angle != 0 and extrude_input.extentOne:
+                    extrude_input.extentOne.taperAngle = taper_value
+
+            elif direction == 'two_sides':
+                # Two-sided asymmetric extrusion
+                distance_value_two = adsk.core.ValueInput.createByReal(distance_two)
+                side_one = adsk.fusion.DistanceExtentDefinition.create(distance_value)
+                side_two = adsk.fusion.DistanceExtentDefinition.create(distance_value_two)
+                # setTwoSidesExtent(extentOne, extentTwo)
+                extrude_input.setTwoSidesExtent(side_one, side_two)
+                # Set taper angles after
+                if taper_angle != 0 and extrude_input.extentOne:
+                    extrude_input.extentOne.taperAngle = taper_value
+                if taper_angle_two != 0 and extrude_input.extentTwo:
+                    extrude_input.extentTwo.taperAngle = taper_value_two
+
+            else:
+                # One-sided extrusion (default)
+                # Use setOneSideExtent for taper support: (extent, direction, taperAngle)
+                dist_extent = adsk.fusion.DistanceExtentDefinition.create(distance_value)
+                extrude_input.setOneSideExtent(dist_extent, adsk.fusion.ExtentDirections.PositiveExtentDirection, taper_value)
+
+        elif extent_type == 'to_object':
+            # Extrude to a face or plane
+            to_entity_path = params.get('to_entity')
+            if not to_entity_path:
+                return {'status': 'error', 'message': 'to_entity path required for to_object extent type'}
+
+            # Resolve the target entity - try geometry path first (for faces)
+            to_entity = None
+            try:
+                to_entity, entity_type = _resolve_geometry_path(to_entity_path)
+            except:
+                pass
+
+            if to_entity is None:
+                # Try as construction plane or other element
+                # Handle shortcut names for construction planes
+                if to_entity_path in ['XY', 'XZ', 'YZ']:
+                    if to_entity_path == 'XY':
+                        to_entity = root.xYConstructionPlane
+                    elif to_entity_path == 'XZ':
+                        to_entity = root.xZConstructionPlane
+                    elif to_entity_path == 'YZ':
+                        to_entity = root.yZConstructionPlane
+                elif 'constructionPlanes' in to_entity_path:
+                    # Get construction plane by name
+                    plane_name = to_entity_path.split('/')[-1]
+                    for plane in root.constructionPlanes:
+                        if plane.name == plane_name:
+                            to_entity = plane
+                            break
+                else:
+                    to_entity, entity_type = _resolve_element_path(to_entity_path)
+
+            if to_entity is None:
+                return {'status': 'error', 'message': f'Could not resolve to_entity: {to_entity_path}'}
+
+            to_extent = adsk.fusion.ToEntityExtentDefinition.create(to_entity, False)
+            extrude_input.setOneSideExtent(to_extent, adsk.fusion.ExtentDirections.PositiveExtentDirection)
+
+        elif extent_type == 'through_all':
+            # Through all in one direction (requires existing bodies to go through)
+            extrude_input.setAllExtent(adsk.fusion.ExtentDirections.PositiveExtentDirection)
+
+        elif extent_type == 'all':
+            # Through all in both directions - use two-sided with AllExtentDefinition
+            # Note: This requires existing geometry to extrude through
+            all_extent_one = adsk.fusion.AllExtentDefinition.create()
+            all_extent_two = adsk.fusion.AllExtentDefinition.create()
+            extrude_input.setTwoSidesExtent(all_extent_one, all_extent_two)
+
+        # Set target body for join/cut/intersect operations
+        if operation in ['join', 'cut', 'intersect']:
+            target_body_path = params.get('target_body')
+            if target_body_path:
+                target_body, _ = _resolve_element_path(target_body_path)
+                # participantBodies expects a Python list of BRepBody, not ObjectCollection
+                extrude_input.participantBodies = [target_body]
+
+        # Create the extrude feature
+        extrude_feature = extrude_features.add(extrude_input)
+
+        # Collect created bodies
+        bodies_created = []
+        for i in range(extrude_feature.bodies.count):
+            body = extrude_feature.bodies.item(i)
+            bodies_created.append({
+                'name': body.name,
+                'path': _find_body_path(body, root),
+                'volume': body.volume,
+                'area': body.area
+            })
+
+        return {
+            'status': 'success',
+            'data': {
+                'feature_name': extrude_feature.name,
+                'sketch': sketch_name,
+                'profile_count': sketch.profiles.count if profile_index == -1 else 1,
+                'extent_type': extent_type,
+                'direction': direction,
+                'distance': distance,
+                'distance_two': distance_two if direction == 'two_sides' else None,
+                'taper_angle': taper_angle,
+                'taper_angle_two': taper_angle_two if direction == 'two_sides' else None,
+                'operation': operation,
+                'bodies_created': bodies_created
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to create extrude: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
 def _handle_create_sketch(params):
     """Create a new sketch on a plane"""
     app = adsk.core.Application.get()
@@ -3186,6 +3397,8 @@ class MainThreadExecutor(adsk.core.CustomEventHandler):
                 result = _handle_measure_all_angles(event_args.get('params', {}))
             elif operation == 'get_edge_relationships':
                 result = _handle_get_edge_relationships(event_args.get('params', {}))
+            elif operation == 'create_extrude':
+                result = _handle_create_extrude(event_args.get('params', {}))
             else:
                 result = {'status': 'error', 'error': f'Unknown operation: {operation}'}
 

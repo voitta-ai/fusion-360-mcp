@@ -646,6 +646,69 @@ async def handle_list_tools() -> list[types.Tool]:
             }
         ),
         types.Tool(
+            name="fusion_create_extrude",
+            description="Create an extrusion feature from a sketch profile. Supports all extent types, directions, operations, and taper angles.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sketch_path": {
+                        "type": "string",
+                        "description": "Path to sketch containing the profile. Format: 'root/sketches/SketchName'"
+                    },
+                    "profile_index": {
+                        "type": "integer",
+                        "description": "Index of profile to extrude (default: 0, use -1 for all profiles)",
+                        "default": 0
+                    },
+                    "extent_type": {
+                        "type": "string",
+                        "enum": ["distance", "to_object", "through_all", "all"],
+                        "description": "Extent type: distance (by value), to_object (up to face/plane), through_all (through entire model), all (both directions through all)",
+                        "default": "distance"
+                    },
+                    "distance": {
+                        "type": "number",
+                        "description": "Extrusion distance in cm (required for 'distance' extent_type)"
+                    },
+                    "to_entity": {
+                        "type": "string",
+                        "description": "Path to face or plane for 'to_object' extent. Format: 'root/bRepBodies/Body/faces/0' or 'root/constructionPlanes/Plane1'"
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["one_side", "two_sides", "symmetric"],
+                        "description": "Direction mode: one_side (positive direction), two_sides (asymmetric both directions), symmetric (equal both directions)",
+                        "default": "one_side"
+                    },
+                    "distance_two": {
+                        "type": "number",
+                        "description": "Second side distance in cm (for 'two_sides' direction)"
+                    },
+                    "taper_angle": {
+                        "type": "number",
+                        "description": "Taper/draft angle in degrees (default: 0)",
+                        "default": 0
+                    },
+                    "taper_angle_two": {
+                        "type": "number",
+                        "description": "Second side taper angle in degrees (for 'two_sides' direction)",
+                        "default": 0
+                    },
+                    "operation": {
+                        "type": "string",
+                        "enum": ["new_body", "join", "cut", "intersect", "new_component"],
+                        "description": "Operation type: new_body, join, cut, intersect with existing body, or new_component",
+                        "default": "new_body"
+                    },
+                    "target_body": {
+                        "type": "string",
+                        "description": "Path to target body for join/cut/intersect operations. Format: 'root/bRepBodies/BodyName'"
+                    }
+                },
+                "required": ["sketch_path"]
+            }
+        ),
+        types.Tool(
             name="fusion_create_sketch",
             description="Create a new sketch on a construction plane. Sketches can then have geometry added via sketch_add_* tools.",
             inputSchema={
@@ -1206,7 +1269,8 @@ async def handle_call_tool(
         'fusion_edit_feature': 'edit_feature',
         'fusion_highlight_geometry': 'highlight_geometry',
         'fusion_measure_all_angles': 'measure_all_angles',
-        'fusion_get_edge_relationships': 'get_edge_relationships'
+        'fusion_get_edge_relationships': 'get_edge_relationships',
+        'fusion_create_extrude': 'create_extrude'
     }
 
     if name not in operation_map:
