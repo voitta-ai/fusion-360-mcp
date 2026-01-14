@@ -13,8 +13,34 @@ import mcp.types as types
 from mcp.server import NotificationOptions, Server
 import mcp.server.stdio
 
-# Fusion 360 HTTP server endpoint
-FUSION_URL = "http://localhost:8080"
+# Fusion 360 HTTP server endpoint (mutable for runtime configuration)
+_fusion_server = "localhost"
+_fusion_port = 8080
+
+# Aliases that map to localhost
+LOCAL_ALIASES = {
+    'local', 'localhost', 'local computer', 'this computer',
+    'here', 'self', 'this machine', 'my computer'
+}
+
+def get_fusion_url():
+    """Get the current Fusion server URL"""
+    return f"http://{_fusion_server}:{_fusion_port}"
+
+def set_fusion_server(server: str):
+    """Set the Fusion server address"""
+    global _fusion_server
+    # Normalize and check for local aliases
+    normalized = server.strip().lower()
+    if normalized in LOCAL_ALIASES:
+        _fusion_server = "localhost"
+    else:
+        _fusion_server = server.strip()
+    return _fusion_server
+
+def is_local_server():
+    """Check if currently connected to localhost"""
+    return _fusion_server.lower() in ('localhost', '127.0.0.1')
 
 # Create server instance
 server = Server("fusion360-mcp")
@@ -1226,6 +1252,29 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": ["edge_path"]
             }
+        ),
+        # Server configuration tools
+        types.Tool(
+            name="fusion_set_server",
+            description="Set the Fusion 360 server address to connect to. Use IP address for remote computers, or friendly names like 'this computer', 'local', 'my computer' for localhost.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "server": {
+                        "type": "string",
+                        "description": "Server address (IP like '192.168.1.50') or friendly name ('this computer', 'local', 'my computer', 'here')"
+                    }
+                },
+                "required": ["server"]
+            }
+        ),
+        types.Tool(
+            name="fusion_get_server",
+            description="Get the current Fusion 360 server address being used.",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
         )
     ]
 
@@ -1234,6 +1283,25 @@ async def handle_call_tool(
     name: str, arguments: dict | None
 ) -> list[types.TextContent | types.ImageContent | types.EmbeddedResource]:
     """Handle tool execution"""
+
+    # Handle server configuration tools locally (no Fusion connection needed)
+    if name == "fusion_set_server":
+        server_input = arguments.get("server", "localhost")
+        new_server = set_fusion_server(server_input)
+        is_local = is_local_server()
+        location = "this computer" if is_local else f"remote server at {new_server}"
+        return [types.TextContent(
+            type="text",
+            text=f"Fusion 360 server set to: {new_server} ({location})\nFull URL: {get_fusion_url()}"
+        )]
+
+    if name == "fusion_get_server":
+        is_local = is_local_server()
+        location = "this computer" if is_local else "remote server"
+        return [types.TextContent(
+            type="text",
+            text=f"Current Fusion 360 server: {_fusion_server} ({location})\nFull URL: {get_fusion_url()}"
+        )]
 
     # Map tool name to operation
     operation_map = {
@@ -1288,7 +1356,7 @@ async def handle_call_tool(
 
     try:
         response = requests.post(
-            FUSION_URL,
+            get_fusion_url(),
             json=payload,
             timeout=30
         )
@@ -1326,7 +1394,7 @@ async def handle_call_tool(
     except requests.exceptions.ConnectionError:
         return [types.TextContent(
             type="text",
-            text="Error: Cannot connect to Fusion 360. Make sure the HTTP Add-In is running."
+            text=f"Error: Cannot connect to Fusion 360 at {get_fusion_url()}. Make sure the HTTP Add-In is running on that machine."
         )]
     except Exception as e:
         return [types.TextContent(

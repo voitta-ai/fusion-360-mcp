@@ -3486,7 +3486,7 @@ def run(context):
         _custom_event.add(_custom_event_handler)
         
         # Start HTTP server
-        _server = HTTPServer(('localhost', 8080), AsyncScriptHandler)
+        _server = HTTPServer(('0.0.0.0', 8080), AsyncScriptHandler)
         _server_thread = threading.Thread(target=_server.serve_forever, daemon=True)
         _server_thread.start()
         
