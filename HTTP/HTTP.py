@@ -2870,7 +2870,7 @@ def _handle_create_sketch(params):
             if plane is None:
                 raise ValueError(f'Construction plane "{plane_name}" not found')
         else:
-            plane, _ = _resolve_element_path(plane_path)
+            plane, _ = _resolve_geometry_path(plane_path)
 
         # Create sketch
         sketch = root.sketches.add(plane)
@@ -4701,6 +4701,589 @@ def _handle_get_edge_relationships(params):
             'traceback': traceback.format_exc()
         }
 
+def _resolve_axis(axis_spec, root):
+    """Resolve axis specification to a Fusion axis object.
+    Supports: 'X','Y','Z' shortcuts, construction axis paths, edge paths.
+    """
+    if axis_spec == 'X':
+        return root.xConstructionAxis
+    elif axis_spec == 'Y':
+        return root.yConstructionAxis
+    elif axis_spec == 'Z':
+        return root.zConstructionAxis
+    else:
+        entity, etype = _resolve_geometry_path(axis_spec)
+        return entity
+
+
+def _resolve_feature_by_name(name, root):
+    """Find a timeline feature by name across all feature collections."""
+    features = root.features
+    for feature_list in [features.extrudeFeatures, features.revolveFeatures,
+                        features.loftFeatures, features.sweepFeatures,
+                        features.filletFeatures, features.chamferFeatures,
+                        features.holeFeatures, features.threadFeatures,
+                        features.mirrorFeatures, features.circularPatternFeatures,
+                        features.rectangularPatternFeatures, features.shellFeatures,
+                        features.combineFeatures]:
+        try:
+            for i in range(feature_list.count):
+                feat = feature_list.item(i)
+                if feat.name == name:
+                    return feat
+        except:
+            continue
+    return None
+
+
+def _handle_create_revolve(params):
+    """Create a revolve feature from a sketch profile around an axis"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        # Get sketch
+        sketch_path = params['sketch_path']
+        sketch_name = sketch_path.split('/')[-1]
+
+        sketch = None
+        for s in root.sketches:
+            if s.name == sketch_name:
+                sketch = s
+                break
+
+        if sketch is None:
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+
+        if sketch.profiles.count == 0:
+            return {'status': 'error', 'message': f'No closed profiles found in sketch "{sketch_name}"'}
+
+        # Get profile
+        profile_index = params.get('profile_index', 0)
+        if profile_index == -1:
+            profiles = adsk.core.ObjectCollection.create()
+            for i in range(sketch.profiles.count):
+                profiles.add(sketch.profiles.item(i))
+            profile = profiles
+        else:
+            if profile_index >= sketch.profiles.count:
+                return {'status': 'error', 'message': f'Profile index {profile_index} out of range. Sketch has {sketch.profiles.count} profile(s)'}
+            profile = sketch.profiles.item(profile_index)
+
+        # Resolve axis
+        axis_param = params.get('axis')
+        if axis_param is None:
+            return {'status': 'error', 'message': 'axis is required for revolve'}
+
+        # Check if axis is a sketch line index
+        if isinstance(axis_param, int) or (isinstance(axis_param, str) and axis_param.isdigit()):
+            line_index = int(axis_param)
+            if line_index >= sketch.sketchCurves.sketchLines.count:
+                return {'status': 'error', 'message': f'Sketch line index {line_index} out of range'}
+            axis = sketch.sketchCurves.sketchLines.item(line_index)
+        else:
+            axis = _resolve_axis(axis_param, root)
+
+        # Get parameters
+        angle = params.get('angle', 360.0)
+        operation = params.get('operation', 'new_body')
+
+        operation_map = {
+            'new_body': adsk.fusion.FeatureOperations.NewBodyFeatureOperation,
+            'join': adsk.fusion.FeatureOperations.JoinFeatureOperation,
+            'cut': adsk.fusion.FeatureOperations.CutFeatureOperation,
+            'intersect': adsk.fusion.FeatureOperations.IntersectFeatureOperation,
+            'new_component': adsk.fusion.FeatureOperations.NewComponentFeatureOperation
+        }
+
+        if operation not in operation_map:
+            return {'status': 'error', 'message': f'Invalid operation: {operation}. Must be one of: {list(operation_map.keys())}'}
+
+        feature_operation = operation_map[operation]
+
+        # Create revolve
+        revolve_features = root.features.revolveFeatures
+        revolve_input = revolve_features.createInput(profile, axis, feature_operation)
+
+        if angle >= 360.0:
+            revolve_input.setAngleExtent(False, adsk.core.ValueInput.createByReal(math.radians(360)))
+        else:
+            revolve_input.setAngleExtent(False, adsk.core.ValueInput.createByReal(math.radians(angle)))
+
+        revolve_feature = revolve_features.add(revolve_input)
+
+        # Collect created bodies
+        bodies_created = []
+        for i in range(revolve_feature.bodies.count):
+            body = revolve_feature.bodies.item(i)
+            bodies_created.append({
+                'name': body.name,
+                'path': _find_body_path(body, root),
+                'volume': body.volume,
+                'area': body.area
+            })
+
+        return {
+            'status': 'success',
+            'data': {
+                'feature_name': revolve_feature.name,
+                'sketch': sketch_name,
+                'angle': angle,
+                'operation': operation,
+                'bodies_created': bodies_created
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to create revolve: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+
+def _handle_create_fillet(params):
+    """Create fillet on edges"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        edge_paths = params['edge_paths']
+        radius = params['radius']
+        is_tangent_chain = params.get('is_tangent_chain', True)
+
+        edges = adsk.core.ObjectCollection.create()
+        for path in edge_paths:
+            edge, _ = _resolve_geometry_path(path)
+            edges.add(edge)
+
+        fillet_features = root.features.filletFeatures
+        fillet_input = fillet_features.createInput()
+        fillet_input.addConstantRadiusEdgeSet(edges, adsk.core.ValueInput.createByReal(radius), is_tangent_chain)
+
+        fillet_feature = fillet_features.add(fillet_input)
+
+        return {
+            'status': 'success',
+            'data': {
+                'feature_name': fillet_feature.name,
+                'edge_count': len(edge_paths),
+                'radius': radius,
+                'is_tangent_chain': is_tangent_chain
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to create fillet: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+
+def _handle_create_chamfer(params):
+    """Create chamfer on edges"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        edge_paths = params['edge_paths']
+        distance = params['distance']
+        distance2 = params.get('distance2')
+        is_tangent_chain = params.get('is_tangent_chain', True)
+
+        edges = adsk.core.ObjectCollection.create()
+        for path in edge_paths:
+            edge, _ = _resolve_geometry_path(path)
+            edges.add(edge)
+
+        chamfer_features = root.features.chamferFeatures
+        chamfer_input = chamfer_features.createInput2()
+
+        if distance2 is not None:
+            chamfer_input.addTwoDistancesChamferEdgeSet(
+                edges,
+                adsk.core.ValueInput.createByReal(distance),
+                adsk.core.ValueInput.createByReal(distance2),
+                is_tangent_chain
+            )
+        else:
+            chamfer_input.addEqualDistanceChamferEdgeSet(
+                edges,
+                adsk.core.ValueInput.createByReal(distance),
+                is_tangent_chain
+            )
+
+        chamfer_feature = chamfer_features.add(chamfer_input)
+
+        return {
+            'status': 'success',
+            'data': {
+                'feature_name': chamfer_feature.name,
+                'edge_count': len(edge_paths),
+                'distance': distance,
+                'distance2': distance2,
+                'is_tangent_chain': is_tangent_chain
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to create chamfer: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+
+def _handle_create_shell(params):
+    """Create shell feature (hollow out a body)"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        face_paths = params['face_paths']
+        thickness = params['thickness']
+        is_tangent_chain = params.get('is_tangent_chain', True)
+        direction = params.get('direction', 'inside')
+
+        faces_to_remove = adsk.core.ObjectCollection.create()
+        for path in face_paths:
+            face, _ = _resolve_geometry_path(path)
+            faces_to_remove.add(face)
+
+        shell_features = root.features.shellFeatures
+        shell_input = shell_features.createInput(faces_to_remove, is_tangent_chain)
+
+        if direction == 'outside':
+            shell_input.outsideThickness = adsk.core.ValueInput.createByReal(thickness)
+        else:
+            shell_input.insideThickness = adsk.core.ValueInput.createByReal(thickness)
+
+        shell_feature = shell_features.add(shell_input)
+
+        return {
+            'status': 'success',
+            'data': {
+                'feature_name': shell_feature.name,
+                'faces_removed': len(face_paths),
+                'thickness': thickness,
+                'direction': direction
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to create shell: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+
+def _handle_create_hole(params):
+    """Create a hole feature on a face"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        face_path = params['face_path']
+        point = params['point']
+        diameter = params['diameter']
+        depth = params['depth']
+        hole_type = params.get('hole_type', 'simple')
+        tip_angle = params.get('tip_angle', 118.0)
+
+        face, _ = _resolve_geometry_path(face_path)
+        center_point = adsk.core.Point3D.create(point['x'], point['y'], point['z'])
+
+        hole_features = root.features.holeFeatures
+
+        if hole_type == 'counterbore':
+            hole_input = hole_features.createCounterboreInput(
+                adsk.core.ValueInput.createByReal(diameter),
+                adsk.core.ValueInput.createByReal(params.get('counterbore_diameter', diameter * 1.5)),
+                adsk.core.ValueInput.createByReal(params.get('counterbore_depth', diameter * 0.5))
+            )
+        elif hole_type == 'countersink':
+            hole_input = hole_features.createCountersinkInput(
+                adsk.core.ValueInput.createByReal(diameter),
+                adsk.core.ValueInput.createByReal(params.get('countersink_diameter', diameter * 1.8)),
+                adsk.core.ValueInput.createByReal(math.radians(params.get('countersink_angle', 90.0)))
+            )
+        else:
+            hole_input = hole_features.createSimpleInput(
+                adsk.core.ValueInput.createByReal(diameter)
+            )
+
+        hole_input.setPositionByPoint(face, center_point)
+        hole_input.setDistanceExtent(adsk.core.ValueInput.createByReal(depth))
+        hole_input.tipAngle = adsk.core.ValueInput.createByReal(math.radians(tip_angle))
+
+        hole_feature = hole_features.add(hole_input)
+
+        return {
+            'status': 'success',
+            'data': {
+                'feature_name': hole_feature.name,
+                'hole_type': hole_type,
+                'diameter': diameter,
+                'depth': depth,
+                'tip_angle': tip_angle
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to create hole: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+
+def _handle_create_rectangular_pattern(params):
+    """Create rectangular pattern of features or bodies"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        input_type = params.get('input_type', 'feature')
+        input_entities = adsk.core.ObjectCollection.create()
+
+        if input_type == 'feature':
+            feat = _resolve_feature_by_name(params['input'], root)
+            if feat is None:
+                return {'status': 'error', 'message': f'Feature "{params["input"]}" not found'}
+            input_entities.add(feat)
+        elif input_type == 'bodies':
+            for path in params['input']:
+                body, _ = _resolve_element_path(path)
+                input_entities.add(body)
+        elif input_type == 'faces':
+            for path in params['input']:
+                face, _ = _resolve_geometry_path(path)
+                input_entities.add(face)
+
+        # Resolve direction one
+        dir_one = _resolve_axis(params['direction_one'], root)
+        count_one = int(params['count_one'])
+        distance_one = params['distance_one']
+        distance_type = params.get('distance_type', 'spacing')
+
+        if distance_type == 'extent':
+            dist_type = adsk.fusion.PatternDistanceType.ExtentPatternDistanceType
+        else:
+            dist_type = adsk.fusion.PatternDistanceType.SpacingPatternDistanceType
+
+        rect_features = root.features.rectangularPatternFeatures
+        rect_input = rect_features.createInput(
+            input_entities, dir_one,
+            adsk.core.ValueInput.createByReal(count_one),
+            adsk.core.ValueInput.createByReal(distance_one),
+            dist_type
+        )
+
+        # Optional second direction
+        if 'direction_two' in params and params['direction_two']:
+            dir_two = _resolve_axis(params['direction_two'], root)
+            count_two = int(params.get('count_two', 1))
+            distance_two = params.get('distance_two', distance_one)
+            rect_input.setDirectionTwo(
+                dir_two,
+                adsk.core.ValueInput.createByReal(count_two),
+                adsk.core.ValueInput.createByReal(distance_two)
+            )
+
+        rect_feature = rect_features.add(rect_input)
+
+        return {
+            'status': 'success',
+            'data': {
+                'feature_name': rect_feature.name,
+                'count_one': count_one,
+                'distance_one': distance_one,
+                'count_two': params.get('count_two'),
+                'distance_two': params.get('distance_two')
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to create rectangular pattern: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+
+def _handle_create_circular_pattern(params):
+    """Create circular pattern of features or bodies"""
+    app = adsk.core.Application.get()
+    design = app.activeProduct
+
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    root = design.rootComponent
+
+    try:
+        input_type = params.get('input_type', 'feature')
+        input_entities = adsk.core.ObjectCollection.create()
+
+        if input_type == 'feature':
+            feat = _resolve_feature_by_name(params['input'], root)
+            if feat is None:
+                return {'status': 'error', 'message': f'Feature "{params["input"]}" not found'}
+            input_entities.add(feat)
+        elif input_type == 'bodies':
+            for path in params['input']:
+                body, _ = _resolve_element_path(path)
+                input_entities.add(body)
+        elif input_type == 'faces':
+            for path in params['input']:
+                face, _ = _resolve_geometry_path(path)
+                input_entities.add(face)
+
+        axis = _resolve_axis(params['axis'], root)
+        count = int(params['count'])
+        angle = params.get('angle', 360.0)
+        is_symmetric = params.get('is_symmetric', False)
+
+        circ_features = root.features.circularPatternFeatures
+        circ_input = circ_features.createInput(input_entities, axis)
+        circ_input.quantity = adsk.core.ValueInput.createByReal(count)
+        circ_input.totalAngle = adsk.core.ValueInput.createByReal(math.radians(angle))
+        circ_input.isSymmetric = is_symmetric
+
+        circ_feature = circ_features.add(circ_input)
+
+        return {
+            'status': 'success',
+            'data': {
+                'feature_name': circ_feature.name,
+                'count': count,
+                'angle': angle,
+                'is_symmetric': is_symmetric
+            }
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'Failed to create circular pattern: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+
+def _handle_screenshot_multiview(params):
+    """Capture screenshots from multiple standard views"""
+    app = adsk.core.Application.get()
+    viewport = app.activeViewport
+    camera = viewport.camera
+
+    width = params.get('width', 800)
+    height = params.get('height', 600)
+    requested_views = params.get('views', ['front', 'right', 'top', 'isometric'])
+
+    view_orientations = {
+        'front': adsk.core.ViewOrientations.FrontViewOrientation,
+        'back': adsk.core.ViewOrientations.BackViewOrientation,
+        'top': adsk.core.ViewOrientations.TopViewOrientation,
+        'bottom': adsk.core.ViewOrientations.BottomViewOrientation,
+        'left': adsk.core.ViewOrientations.LeftViewOrientation,
+        'right': adsk.core.ViewOrientations.RightViewOrientation,
+        'isometric': adsk.core.ViewOrientations.IsoTopRightViewOrientation,
+    }
+
+    # Save current camera
+    original_camera = viewport.camera
+
+    views_data = []
+
+    try:
+        for view_name in requested_views:
+            if view_name not in view_orientations:
+                continue
+
+            # Set camera orientation
+            cam = viewport.camera
+            cam.viewOrientation = view_orientations[view_name]
+            viewport.camera = cam
+            viewport.fit()
+            adsk.doEvents()
+
+            # Capture screenshot
+            temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            temp_path = temp_file.name
+            temp_file.close()
+
+            try:
+                viewport.saveAsImageFile(temp_path, width, height)
+                with open(temp_path, 'rb') as f:
+                    image_data = base64.b64encode(f.read()).decode('utf-8')
+                views_data.append({
+                    'view_name': view_name,
+                    'image': image_data,
+                    'mimeType': 'image/png',
+                    'width': width,
+                    'height': height
+                })
+            finally:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+
+        # Restore original camera
+        viewport.camera = original_camera
+        adsk.doEvents()
+
+        return {
+            'status': 'success',
+            'data': {
+                'views': views_data,
+                'view_count': len(views_data)
+            }
+        }
+
+    except Exception as e:
+        # Restore camera on error
+        try:
+            viewport.camera = original_camera
+        except:
+            pass
+        return {
+            'status': 'error',
+            'message': f'Failed to capture multiview screenshots: {str(e)}',
+            'traceback': traceback.format_exc()
+        }
+
+
 class MainThreadExecutor(adsk.core.CustomEventHandler):
     """Executes operations on Fusion's main thread"""
     def notify(self, args):
@@ -4839,6 +5422,22 @@ class MainThreadExecutor(adsk.core.CustomEventHandler):
                 result = _handle_create_component(event_args.get('params', {}))
             elif operation == 'copy_occurrence':
                 result = _handle_copy_occurrence(event_args.get('params', {}))
+            elif operation == 'create_revolve':
+                result = _handle_create_revolve(event_args.get('params', {}))
+            elif operation == 'create_fillet':
+                result = _handle_create_fillet(event_args.get('params', {}))
+            elif operation == 'create_chamfer':
+                result = _handle_create_chamfer(event_args.get('params', {}))
+            elif operation == 'create_shell':
+                result = _handle_create_shell(event_args.get('params', {}))
+            elif operation == 'create_hole':
+                result = _handle_create_hole(event_args.get('params', {}))
+            elif operation == 'create_rectangular_pattern':
+                result = _handle_create_rectangular_pattern(event_args.get('params', {}))
+            elif operation == 'create_circular_pattern':
+                result = _handle_create_circular_pattern(event_args.get('params', {}))
+            elif operation == 'screenshot_multiview':
+                result = _handle_screenshot_multiview(event_args.get('params', {}))
             else:
                 result = {'status': 'error', 'error': f'Unknown operation: {operation}'}
 

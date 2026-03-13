@@ -756,7 +756,7 @@ async def handle_list_tools() -> list[types.Tool]:
                 "properties": {
                     "plane": {
                         "type": "string",
-                        "description": "Path to construction plane. Can use shortcuts 'XY', 'XZ', 'YZ' or full path like 'root/constructionPlanes/Plane1'"
+                        "description": "Path to plane or planar face. Shortcuts: 'XY', 'XZ', 'YZ'. Paths: 'root/constructionPlanes/Plane1' or 'root/bRepBodies/Body1/faces/0' (any planar face)"
                     },
                     "name": {
                         "type": "string",
@@ -1997,6 +1997,291 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": ["source_path"]
             }
+        ),
+        types.Tool(
+            name="fusion_create_revolve",
+            description="Create a revolve feature by rotating a sketch profile around an axis. Supports sketch lines as axis or construction axes.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "sketch_path": {
+                        "type": "string",
+                        "description": "Path to sketch containing the profile. Format: 'root/sketches/SketchName'"
+                    },
+                    "axis": {
+                        "description": "Axis to revolve around. Can be: sketch line index (integer), 'X'/'Y'/'Z' for construction axes, or path like 'root/constructionAxes/AxisName'"
+                    },
+                    "profile_index": {
+                        "type": "integer",
+                        "description": "Index of profile to revolve (default: 0, use -1 for all profiles)",
+                        "default": 0
+                    },
+                    "angle": {
+                        "type": "number",
+                        "description": "Revolve angle in degrees (default: 360 for full revolution)",
+                        "default": 360
+                    },
+                    "operation": {
+                        "type": "string",
+                        "enum": ["new_body", "join", "cut", "intersect", "new_component"],
+                        "description": "Operation type",
+                        "default": "new_body"
+                    }
+                },
+                "required": ["sketch_path", "axis"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_fillet",
+            description="Create fillet (rounded edges) on one or more edges of a body.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "edge_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of edge paths. Format: 'root/bRepBodies/Body1/edges/0'"
+                    },
+                    "radius": {
+                        "type": "number",
+                        "description": "Fillet radius in cm"
+                    },
+                    "is_tangent_chain": {
+                        "type": "boolean",
+                        "description": "Whether to include tangent-connected edges (default: true)",
+                        "default": True
+                    }
+                },
+                "required": ["edge_paths", "radius"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_chamfer",
+            description="Create chamfer (beveled edges) on one or more edges. Supports equal or asymmetric distances.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "edge_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of edge paths. Format: 'root/bRepBodies/Body1/edges/0'"
+                    },
+                    "distance": {
+                        "type": "number",
+                        "description": "Chamfer distance in cm"
+                    },
+                    "distance2": {
+                        "type": "number",
+                        "description": "Second distance for asymmetric chamfer (optional)"
+                    },
+                    "is_tangent_chain": {
+                        "type": "boolean",
+                        "description": "Whether to include tangent-connected edges (default: true)",
+                        "default": True
+                    }
+                },
+                "required": ["edge_paths", "distance"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_shell",
+            description="Create shell feature to hollow out a body. Select faces to remove (open) and specify wall thickness.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "face_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of face paths to remove (open faces). Format: 'root/bRepBodies/Body1/faces/0'"
+                    },
+                    "thickness": {
+                        "type": "number",
+                        "description": "Wall thickness in cm"
+                    },
+                    "direction": {
+                        "type": "string",
+                        "enum": ["inside", "outside"],
+                        "description": "Thickness direction (default: inside)",
+                        "default": "inside"
+                    },
+                    "is_tangent_chain": {
+                        "type": "boolean",
+                        "description": "Whether to chain tangent faces (default: true)",
+                        "default": True
+                    }
+                },
+                "required": ["face_paths", "thickness"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_hole",
+            description="Create a hole feature on a face. Supports simple, counterbore, and countersink holes.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "face_path": {
+                        "type": "string",
+                        "description": "Path to planar face. Format: 'root/bRepBodies/Body1/faces/0'"
+                    },
+                    "point": {
+                        "type": "object",
+                        "description": "Center point of hole (x, y, z in cm)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        },
+                        "required": ["x", "y", "z"]
+                    },
+                    "diameter": {
+                        "type": "number",
+                        "description": "Hole diameter in cm"
+                    },
+                    "depth": {
+                        "type": "number",
+                        "description": "Hole depth in cm"
+                    },
+                    "hole_type": {
+                        "type": "string",
+                        "enum": ["simple", "counterbore", "countersink"],
+                        "description": "Hole type (default: simple)",
+                        "default": "simple"
+                    },
+                    "tip_angle": {
+                        "type": "number",
+                        "description": "Drill tip angle in degrees (default: 118)",
+                        "default": 118
+                    },
+                    "counterbore_diameter": {
+                        "type": "number",
+                        "description": "Counterbore diameter in cm (for counterbore type)"
+                    },
+                    "counterbore_depth": {
+                        "type": "number",
+                        "description": "Counterbore depth in cm (for counterbore type)"
+                    },
+                    "countersink_diameter": {
+                        "type": "number",
+                        "description": "Countersink diameter in cm (for countersink type)"
+                    },
+                    "countersink_angle": {
+                        "type": "number",
+                        "description": "Countersink angle in degrees (default: 90, for countersink type)",
+                        "default": 90
+                    }
+                },
+                "required": ["face_path", "point", "diameter", "depth"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_rectangular_pattern",
+            description="Create rectangular pattern of features or bodies along one or two directions.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "input_type": {
+                        "type": "string",
+                        "enum": ["feature", "bodies", "faces"],
+                        "description": "Type of entities to pattern",
+                        "default": "feature"
+                    },
+                    "input": {
+                        "description": "Feature name (string) or array of body/face paths"
+                    },
+                    "direction_one": {
+                        "type": "string",
+                        "description": "First direction: 'X'/'Y'/'Z', edge path, or axis path"
+                    },
+                    "count_one": {
+                        "type": "integer",
+                        "description": "Number of instances in first direction (including original)"
+                    },
+                    "distance_one": {
+                        "type": "number",
+                        "description": "Spacing or total extent in first direction (cm)"
+                    },
+                    "direction_two": {
+                        "type": "string",
+                        "description": "Second direction (optional)"
+                    },
+                    "count_two": {
+                        "type": "integer",
+                        "description": "Number of instances in second direction"
+                    },
+                    "distance_two": {
+                        "type": "number",
+                        "description": "Spacing or total extent in second direction (cm)"
+                    },
+                    "distance_type": {
+                        "type": "string",
+                        "enum": ["spacing", "extent"],
+                        "description": "Whether distance is per-instance spacing or total extent (default: spacing)",
+                        "default": "spacing"
+                    }
+                },
+                "required": ["input", "direction_one", "count_one", "distance_one"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_circular_pattern",
+            description="Create circular pattern of features or bodies around an axis.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "input_type": {
+                        "type": "string",
+                        "enum": ["feature", "bodies", "faces"],
+                        "description": "Type of entities to pattern",
+                        "default": "feature"
+                    },
+                    "input": {
+                        "description": "Feature name (string) or array of body/face paths"
+                    },
+                    "axis": {
+                        "type": "string",
+                        "description": "Axis to pattern around: 'X'/'Y'/'Z', edge path, or axis path"
+                    },
+                    "count": {
+                        "type": "integer",
+                        "description": "Total number of instances (including original)"
+                    },
+                    "angle": {
+                        "type": "number",
+                        "description": "Total angle in degrees (default: 360)",
+                        "default": 360
+                    },
+                    "is_symmetric": {
+                        "type": "boolean",
+                        "description": "Pattern symmetrically in both directions (default: false)",
+                        "default": False
+                    }
+                },
+                "required": ["input", "axis", "count"]
+            }
+        ),
+        types.Tool(
+            name="fusion_screenshot_multiview",
+            description="Capture screenshots from multiple standard views in one call. Returns front/right/top/isometric by default. Much better for spatial understanding than a single view.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "width": {
+                        "type": "integer",
+                        "description": "Image width in pixels (default: 800)",
+                        "default": 800
+                    },
+                    "height": {
+                        "type": "integer",
+                        "description": "Image height in pixels (default: 600)",
+                        "default": 600
+                    },
+                    "views": {
+                        "type": "array",
+                        "items": {"type": "string", "enum": ["front", "back", "top", "bottom", "left", "right", "isometric"]},
+                        "description": "Which views to capture (default: front, right, top, isometric)"
+                    }
+                }
+            }
         )
     ]
 
@@ -2081,7 +2366,15 @@ async def handle_call_tool(
         'fusion_rotate_occurrence': 'rotate_occurrence',
         'fusion_set_occurrence_transform': 'set_occurrence_transform',
         'fusion_create_component': 'create_component',
-        'fusion_copy_occurrence': 'copy_occurrence'
+        'fusion_copy_occurrence': 'copy_occurrence',
+        'fusion_create_revolve': 'create_revolve',
+        'fusion_create_fillet': 'create_fillet',
+        'fusion_create_chamfer': 'create_chamfer',
+        'fusion_create_shell': 'create_shell',
+        'fusion_create_hole': 'create_hole',
+        'fusion_create_rectangular_pattern': 'create_rectangular_pattern',
+        'fusion_create_circular_pattern': 'create_circular_pattern',
+        'fusion_screenshot_multiview': 'screenshot_multiview'
     }
 
     if name not in operation_map:
@@ -2122,6 +2415,25 @@ async def handle_call_tool(
                     )
                 ]
 
+            # Handle multiview image response
+            if operation == 'screenshot_multiview' and result.get('status') == 'success':
+                contents = []
+                for view_data in result['data']['views']:
+                    contents.append(types.TextContent(
+                        type="text",
+                        text=f"--- {view_data['view_name']} view ---"
+                    ))
+                    contents.append(types.ImageContent(
+                        type="image",
+                        data=view_data['image'],
+                        mimeType=view_data['mimeType']
+                    ))
+                contents.append(types.TextContent(
+                    type="text",
+                    text=f"Multiview capture: {result['data']['view_count']} views at {result['data']['views'][0]['width']}x{result['data']['views'][0]['height']}"
+                ))
+                return contents
+
             # Handle regular JSON response
             return [types.TextContent(
                 type="text",
@@ -2153,7 +2465,7 @@ async def main():
             write_stream,
             InitializationOptions(
                 server_name="fusion360-mcp",
-                server_version="0.12.4",
+                server_version="0.13.0",
                 capabilities=server.get_capabilities(
                     notification_options=NotificationOptions(),
                     experimental_capabilities={},
