@@ -1275,6 +1275,456 @@ async def handle_list_tools() -> list[types.Tool]:
                 "type": "object",
                 "properties": {}
             }
+        ),
+        types.Tool(
+            name="fusion_set_design_type",
+            description="Switch between Parametric and Direct design modes. Direct mode is faster for batch geometry creation. Parametric mode maintains feature history and supports parameters.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "mode": {
+                        "type": "string",
+                        "enum": ["parametric", "direct"],
+                        "description": "Design mode: 'parametric' (feature history, parameters) or 'direct' (no history, faster)"
+                    }
+                },
+                "required": ["mode"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_joint",
+            description="Create a joint between two components. Snaps geometry_one to geometry_two. Supports all 7 motion types: rigid, revolute, slider, cylindrical, ball, planar, pin_slot.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "geometry_one": {
+                        "type": "object",
+                        "description": "First joint geometry (component that moves to snap)",
+                        "properties": {
+                            "entity_path": {
+                                "type": "string",
+                                "description": "Path to entity: 'root/bodies/Body1/faces/0', 'root/children/Comp:1/bodies/Body1/edges/3', 'root/bodies/Body1/vertices/0', or 'origin'"
+                            },
+                            "key_point": {
+                                "type": "string",
+                                "enum": ["center", "start", "middle", "end"],
+                                "description": "Key point on entity (default: center). For faces: center of face. For edges: start/middle/end point. For cylinders: start/middle/end along axis.",
+                                "default": "center"
+                            }
+                        },
+                        "required": ["entity_path"]
+                    },
+                    "geometry_two": {
+                        "type": "object",
+                        "description": "Second joint geometry (stationary reference)",
+                        "properties": {
+                            "entity_path": {
+                                "type": "string",
+                                "description": "Path to entity (same format as geometry_one)"
+                            },
+                            "key_point": {
+                                "type": "string",
+                                "enum": ["center", "start", "middle", "end"],
+                                "description": "Key point on entity",
+                                "default": "center"
+                            }
+                        },
+                        "required": ["entity_path"]
+                    },
+                    "motion_type": {
+                        "type": "string",
+                        "enum": ["rigid", "revolute", "slider", "cylindrical", "ball", "planar", "pin_slot"],
+                        "description": "Joint motion type. rigid=0 DOF, revolute=1 rotation, slider=1 translation, cylindrical=rotation+translation same axis, ball=3 rotations, planar=2 translations+1 rotation, pin_slot=rotation+translation different axes",
+                        "default": "rigid"
+                    },
+                    "axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "description": "Rotation axis for revolute/cylindrical/pin_slot (default: z)",
+                        "default": "z"
+                    },
+                    "slide_axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "description": "Slide direction for slider/pin_slot (default: x)",
+                        "default": "x"
+                    },
+                    "normal_axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "description": "Normal direction for planar joints (default: y)",
+                        "default": "y"
+                    },
+                    "pitch_axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "description": "Pitch axis for ball joints (default: z)",
+                        "default": "z"
+                    },
+                    "yaw_axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "description": "Yaw axis for ball joints (default: x)",
+                        "default": "x"
+                    },
+                    "offset": {
+                        "type": "number",
+                        "description": "Offset distance between geometries in cm"
+                    },
+                    "angle": {
+                        "type": "number",
+                        "description": "Angle between geometries in degrees"
+                    },
+                    "is_flipped": {
+                        "type": "boolean",
+                        "description": "Flip joint direction",
+                        "default": False
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Joint display name"
+                    }
+                },
+                "required": ["geometry_one", "geometry_two"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_as_built_joint",
+            description="Create an as-built joint between two occurrences that are already positioned correctly. Unlike regular joints, as-built joints do NOT move components.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "occurrence_one": {
+                        "type": "string",
+                        "description": "Path to first occurrence: 'root/children/CompName:1' or 'root/occurrences/CompName:1'"
+                    },
+                    "occurrence_two": {
+                        "type": "string",
+                        "description": "Path to second occurrence"
+                    },
+                    "geometry": {
+                        "type": "object",
+                        "description": "Optional geometry reference for joint position",
+                        "properties": {
+                            "entity_path": {
+                                "type": "string",
+                                "description": "Path to face/edge/vertex for joint position"
+                            },
+                            "key_point": {
+                                "type": "string",
+                                "enum": ["center", "start", "middle", "end"],
+                                "default": "center"
+                            }
+                        },
+                        "required": ["entity_path"]
+                    },
+                    "motion_type": {
+                        "type": "string",
+                        "enum": ["rigid", "revolute", "slider", "cylindrical", "ball", "planar", "pin_slot"],
+                        "description": "Joint motion type (default: rigid)",
+                        "default": "rigid"
+                    },
+                    "axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "description": "Rotation axis (default: z)",
+                        "default": "z"
+                    },
+                    "slide_axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "description": "Slide direction (default: x)",
+                        "default": "x"
+                    },
+                    "normal_axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "default": "y"
+                    },
+                    "pitch_axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "default": "z"
+                    },
+                    "yaw_axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "default": "x"
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Joint display name"
+                    }
+                },
+                "required": ["occurrence_one", "occurrence_two"]
+            }
+        ),
+        types.Tool(
+            name="fusion_drive_joint",
+            description="Drive a joint to specific position values. Set rotation (degrees), slide (cm), pitch/yaw/roll (degrees) depending on joint type. Optionally animate with steps.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "joint_name": {
+                        "type": "string",
+                        "description": "Name of the joint to drive"
+                    },
+                    "rotation": {
+                        "type": "number",
+                        "description": "Target rotation in degrees (revolute, cylindrical, pin_slot, planar)"
+                    },
+                    "slide": {
+                        "type": "number",
+                        "description": "Target slide distance in cm (slider, cylindrical, pin_slot)"
+                    },
+                    "primary_slide": {
+                        "type": "number",
+                        "description": "Primary slide in cm (planar joints)"
+                    },
+                    "secondary_slide": {
+                        "type": "number",
+                        "description": "Secondary slide in cm (planar joints)"
+                    },
+                    "pitch": {
+                        "type": "number",
+                        "description": "Pitch angle in degrees (ball joints)"
+                    },
+                    "yaw": {
+                        "type": "number",
+                        "description": "Yaw angle in degrees (ball joints)"
+                    },
+                    "roll": {
+                        "type": "number",
+                        "description": "Roll angle in degrees (ball joints)"
+                    },
+                    "animate_steps": {
+                        "type": "integer",
+                        "description": "Number of animation steps (0 = instant, >0 = smooth animation with viewport updates)",
+                        "default": 0
+                    }
+                },
+                "required": ["joint_name"]
+            }
+        ),
+        types.Tool(
+            name="fusion_set_joint_limits",
+            description="Set min/max/rest limits on a joint's degree of freedom. Rotation limits in degrees, slide limits in cm.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "joint_name": {
+                        "type": "string",
+                        "description": "Name of the joint"
+                    },
+                    "dof": {
+                        "type": "string",
+                        "enum": ["rotation", "slide", "pitch", "yaw", "roll", "primary_slide", "secondary_slide"],
+                        "description": "Which degree of freedom to set limits on. Depends on joint type: revolute=rotation, slider=slide, cylindrical=rotation|slide, ball=pitch|yaw|roll, planar=rotation|primary_slide|secondary_slide, pin_slot=rotation|slide"
+                    },
+                    "min_enabled": {
+                        "type": "boolean",
+                        "description": "Enable minimum limit"
+                    },
+                    "min_value": {
+                        "type": "number",
+                        "description": "Minimum value (degrees for rotation, cm for slide). Automatically enables min_enabled."
+                    },
+                    "max_enabled": {
+                        "type": "boolean",
+                        "description": "Enable maximum limit"
+                    },
+                    "max_value": {
+                        "type": "number",
+                        "description": "Maximum value (degrees for rotation, cm for slide). Automatically enables max_enabled."
+                    },
+                    "rest_enabled": {
+                        "type": "boolean",
+                        "description": "Enable rest/home position"
+                    },
+                    "rest_value": {
+                        "type": "number",
+                        "description": "Rest/home value (degrees or cm). Automatically enables rest_enabled."
+                    }
+                },
+                "required": ["joint_name", "dof"]
+            }
+        ),
+        types.Tool(
+            name="fusion_modify_joint",
+            description="Modify joint properties: lock/unlock, suppress/unsuppress, rename, flip, or change motion type. Works on both regular joints and as-built joints.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "joint_name": {
+                        "type": "string",
+                        "description": "Name of the joint to modify"
+                    },
+                    "is_locked": {
+                        "type": "boolean",
+                        "description": "Lock (true) or unlock (false) the joint"
+                    },
+                    "is_suppressed": {
+                        "type": "boolean",
+                        "description": "Suppress (true) or unsuppress (false) the joint"
+                    },
+                    "new_name": {
+                        "type": "string",
+                        "description": "New display name for the joint"
+                    },
+                    "is_flipped": {
+                        "type": "boolean",
+                        "description": "Flip joint direction"
+                    },
+                    "motion_type": {
+                        "type": "string",
+                        "enum": ["rigid", "revolute", "slider", "cylindrical", "ball", "planar", "pin_slot"],
+                        "description": "Change the motion type of the joint"
+                    },
+                    "axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "description": "Rotation axis when changing motion type",
+                        "default": "z"
+                    },
+                    "slide_axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "description": "Slide axis when changing motion type",
+                        "default": "x"
+                    },
+                    "normal_axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "default": "y"
+                    },
+                    "pitch_axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "default": "z"
+                    },
+                    "yaw_axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "default": "x"
+                    }
+                },
+                "required": ["joint_name"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_joint_origin",
+            description="Create a reusable joint origin point on a component. Joint origins define persistent connection points with optional offsets and angle for use in joint creation.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "geometry": {
+                        "type": "object",
+                        "description": "Geometry defining the joint origin location",
+                        "properties": {
+                            "entity_path": {
+                                "type": "string",
+                                "description": "Path to face/edge/vertex: 'root/bodies/Body1/faces/0'"
+                            },
+                            "key_point": {
+                                "type": "string",
+                                "enum": ["center", "start", "middle", "end"],
+                                "default": "center"
+                            }
+                        },
+                        "required": ["entity_path"]
+                    },
+                    "component_path": {
+                        "type": "string",
+                        "description": "Path to component (default: 'root'). Use 'root/children/CompName:1' for sub-components.",
+                        "default": "root"
+                    },
+                    "offset_x": {
+                        "type": "number",
+                        "description": "X offset in cm"
+                    },
+                    "offset_y": {
+                        "type": "number",
+                        "description": "Y offset in cm"
+                    },
+                    "offset_z": {
+                        "type": "number",
+                        "description": "Z offset in cm"
+                    },
+                    "angle": {
+                        "type": "number",
+                        "description": "Angle offset in degrees"
+                    },
+                    "is_flipped": {
+                        "type": "boolean",
+                        "description": "Flip the joint origin direction",
+                        "default": False
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Display name for the joint origin"
+                    }
+                },
+                "required": ["geometry"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_rigid_group",
+            description="Create a rigid group that locks multiple occurrences together so they move as one unit.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "occurrence_paths": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of occurrence paths: ['root/children/Comp1:1', 'root/children/Comp2:1']"
+                    },
+                    "include_children": {
+                        "type": "boolean",
+                        "description": "Include child components in the rigid group",
+                        "default": False
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Display name for the rigid group"
+                    }
+                },
+                "required": ["occurrence_paths"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_motion_link",
+            description="Create a motion link to synchronize motion between two joints. Maps a value range on joint_one to a value range on joint_two (e.g., '360 deg' rotation = '10 cm' slide).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "joint_one": {
+                        "type": "string",
+                        "description": "Name of the first joint"
+                    },
+                    "joint_two": {
+                        "type": "string",
+                        "description": "Name of the second joint. Omit to link two DOFs within joint_one (for multi-DOF joints like cylindrical, ball, planar, pin_slot)."
+                    },
+                    "value_one": {
+                        "type": "string",
+                        "description": "Motion range for joint_one as string with units, e.g. '360 deg', '10 cm'"
+                    },
+                    "value_two": {
+                        "type": "string",
+                        "description": "Motion range for joint_two as string with units, e.g. '360 deg', '10 cm'"
+                    },
+                    "is_reversed": {
+                        "type": "boolean",
+                        "description": "Reverse the motion direction",
+                        "default": False
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "Display name for the motion link"
+                    }
+                },
+                "required": ["joint_one"]
+            }
         )
     ]
 
@@ -1338,7 +1788,16 @@ async def handle_call_tool(
         'fusion_highlight_geometry': 'highlight_geometry',
         'fusion_measure_all_angles': 'measure_all_angles',
         'fusion_get_edge_relationships': 'get_edge_relationships',
-        'fusion_create_extrude': 'create_extrude'
+        'fusion_create_extrude': 'create_extrude',
+        'fusion_set_design_type': 'set_design_type',
+        'fusion_create_joint': 'create_joint',
+        'fusion_create_as_built_joint': 'create_as_built_joint',
+        'fusion_drive_joint': 'drive_joint',
+        'fusion_set_joint_limits': 'set_joint_limits',
+        'fusion_modify_joint': 'modify_joint',
+        'fusion_create_joint_origin': 'create_joint_origin',
+        'fusion_create_rigid_group': 'create_rigid_group',
+        'fusion_create_motion_link': 'create_motion_link'
     }
 
     if name not in operation_map:

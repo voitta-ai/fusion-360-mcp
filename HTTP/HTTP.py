@@ -107,6 +107,650 @@ def _handle_set_camera(params):
 
     return {'status': 'success', 'message': 'Camera updated'}
 
+def _find_joint_by_name(root, name):
+    """Find a joint or as-built joint by name. Returns (joint, joint_kind) or raises ValueError."""
+    for j in root.joints:
+        if j.name == name:
+            return (j, 'Joint')
+    for j in root.asBuiltJoints:
+        if j.name == name:
+            return (j, 'AsBuiltJoint')
+    available = [j.name for j in root.joints] + [j.name for j in root.asBuiltJoints]
+    raise ValueError(f'Joint "{name}" not found. Available: {available}')
+
+def _resolve_joint_geometry(geo_params):
+    """
+    Resolve joint geometry specification to a JointGeometry object.
+    geo_params: {entity_path, key_point, occurrence_path}
+    """
+    entity_path = geo_params.get('entity_path')
+    key_point_str = geo_params.get('key_point', 'center').lower()
+
+    # Map key point string to enum
+    key_point_map = {
+        'center': adsk.fusion.JointKeyPointTypes.CenterKeyPoint,
+        'start': adsk.fusion.JointKeyPointTypes.StartKeyPoint,
+        'middle': adsk.fusion.JointKeyPointTypes.MiddleKeyPoint,
+        'end': adsk.fusion.JointKeyPointTypes.EndKeyPoint
+    }
+    if key_point_str not in key_point_map:
+        raise ValueError(f'Invalid key_point "{key_point_str}". Use: center, start, middle, end')
+    key_point = key_point_map[key_point_str]
+
+    # Handle origin point shortcut
+    if entity_path == 'origin' or entity_path is None:
+        app = adsk.core.Application.get()
+        design = adsk.fusion.Design.cast(app.activeProduct)
+        root = design.rootComponent
+        return adsk.fusion.JointGeometry.createByPoint(root.originConstructionPoint)
+
+    # Resolve entity
+    entity, entity_type = _resolve_geometry_path(entity_path)
+
+    if entity_type == 'BRepVertex':
+        geo = adsk.fusion.JointGeometry.createByPoint(entity)
+    elif entity_type == 'BRepEdge':
+        geo = adsk.fusion.JointGeometry.createByCurve(entity, key_point)
+    elif entity_type == 'BRepFace':
+        # Determine face surface type
+        surface = entity.geometry
+        surface_type = surface.surfaceType
+        if surface_type == adsk.core.SurfaceTypes.PlaneSurfaceType:
+            geo = adsk.fusion.JointGeometry.createByPlanarFace(entity, None, key_point)
+        elif surface_type in (adsk.core.SurfaceTypes.CylinderSurfaceType,
+                              adsk.core.SurfaceTypes.ConeSurfaceType):
+            geo = adsk.fusion.JointGeometry.createByNonPlanarFace(entity, key_point)
+        elif surface_type == adsk.core.SurfaceTypes.SphereSurfaceType:
+            geo = adsk.fusion.JointGeometry.createByNonPlanarFace(entity, key_point)
+        elif surface_type == adsk.core.SurfaceTypes.TorusSurfaceType:
+            geo = adsk.fusion.JointGeometry.createByNonPlanarFace(entity, key_point)
+        else:
+            # NurbsSurface or other - try non-planar
+            geo = adsk.fusion.JointGeometry.createByNonPlanarFace(entity, key_point)
+    elif entity_type == 'Occurrence':
+        geo = adsk.fusion.JointGeometry.createByPoint(entity.component.originConstructionPoint)
+    else:
+        raise ValueError(f'Cannot create joint geometry from entity type: {entity_type}')
+
+    if geo is None:
+        raise ValueError(f'Failed to create JointGeometry from {entity_path} (type={entity_type}, key_point={key_point_str})')
+
+    return geo
+
+def _get_joint_motion_info(joint):
+    """Extract current motion state from a joint for return data."""
+    motion = joint.jointMotion
+    jtype = motion.jointType
+
+    type_names = {
+        0: 'rigid', 1: 'revolute', 2: 'slider', 3: 'cylindrical',
+        4: 'pin_slot', 5: 'planar', 6: 'ball'
+    }
+    info = {'motion_type': type_names.get(jtype, f'unknown({jtype})')}
+
+    def get_limits_info(limits):
+        return {
+            'min_enabled': limits.isMinimumValueEnabled,
+            'min_value': limits.minimumValue if limits.isMinimumValueEnabled else None,
+            'max_enabled': limits.isMaximumValueEnabled,
+            'max_value': limits.maximumValue if limits.isMaximumValueEnabled else None,
+            'rest_enabled': limits.isRestValueEnabled,
+            'rest_value': limits.restValue if limits.isRestValueEnabled else None
+        }
+
+    if jtype == 1:  # Revolute
+        m = adsk.fusion.RevoluteJointMotion.cast(motion)
+        info['rotation_deg'] = math.degrees(m.rotationValue)
+        info['rotation_limits'] = get_limits_info(m.rotationLimits)
+    elif jtype == 2:  # Slider
+        m = adsk.fusion.SliderJointMotion.cast(motion)
+        info['slide_cm'] = m.slideValue
+        info['slide_limits'] = get_limits_info(m.slideLimits)
+    elif jtype == 3:  # Cylindrical
+        m = adsk.fusion.CylindricalJointMotion.cast(motion)
+        info['rotation_deg'] = math.degrees(m.rotationValue)
+        info['slide_cm'] = m.slideValue
+        info['rotation_limits'] = get_limits_info(m.rotationLimits)
+        info['slide_limits'] = get_limits_info(m.slideLimits)
+    elif jtype == 4:  # PinSlot
+        m = adsk.fusion.PinSlotJointMotion.cast(motion)
+        info['rotation_deg'] = math.degrees(m.rotationValue)
+        info['slide_cm'] = m.slideValue
+        info['rotation_limits'] = get_limits_info(m.rotationLimits)
+        info['slide_limits'] = get_limits_info(m.slideLimits)
+    elif jtype == 5:  # Planar
+        m = adsk.fusion.PlanarJointMotion.cast(motion)
+        info['primary_slide_cm'] = m.primarySlideValue
+        info['secondary_slide_cm'] = m.secondarySlideValue
+        info['rotation_deg'] = math.degrees(m.rotationValue)
+        info['primary_slide_limits'] = get_limits_info(m.primarySlideLimits)
+        info['secondary_slide_limits'] = get_limits_info(m.secondarySlideLimits)
+        info['rotation_limits'] = get_limits_info(m.rotationLimits)
+    elif jtype == 6:  # Ball
+        m = adsk.fusion.BallJointMotion.cast(motion)
+        info['pitch_deg'] = math.degrees(m.pitchValue)
+        info['yaw_deg'] = math.degrees(m.yawValue)
+        info['roll_deg'] = math.degrees(m.rollValue)
+        info['pitch_limits'] = get_limits_info(m.pitchLimits)
+        info['yaw_limits'] = get_limits_info(m.yawLimits)
+        info['roll_limits'] = get_limits_info(m.rollLimits)
+
+    return info
+
+def _set_joint_motion_type(input_or_joint, params):
+    """Configure motion type on a JointInput, AsBuiltJointInput, or existing Joint/AsBuiltJoint."""
+    motion_type = params.get('motion_type', 'rigid').lower()
+
+    # Map direction strings to enum
+    dir_map = {
+        'x': adsk.fusion.JointDirections.XAxisJointDirection,
+        'y': adsk.fusion.JointDirections.YAxisJointDirection,
+        'z': adsk.fusion.JointDirections.ZAxisJointDirection,
+    }
+
+    axis = dir_map.get(params.get('axis', 'z').lower(), adsk.fusion.JointDirections.ZAxisJointDirection)
+    slide_axis = dir_map.get(params.get('slide_axis', 'x').lower(), adsk.fusion.JointDirections.XAxisJointDirection)
+    normal_axis = dir_map.get(params.get('normal_axis', 'y').lower(), adsk.fusion.JointDirections.YAxisJointDirection)
+    pitch_axis = dir_map.get(params.get('pitch_axis', 'z').lower(), adsk.fusion.JointDirections.ZAxisJointDirection)
+    yaw_axis = dir_map.get(params.get('yaw_axis', 'x').lower(), adsk.fusion.JointDirections.XAxisJointDirection)
+
+    if motion_type == 'rigid':
+        input_or_joint.setAsRigidJointMotion()
+    elif motion_type == 'revolute':
+        input_or_joint.setAsRevoluteJointMotion(axis)
+    elif motion_type == 'slider':
+        input_or_joint.setAsSliderJointMotion(slide_axis)
+    elif motion_type == 'cylindrical':
+        input_or_joint.setAsCylindricalJointMotion(axis)
+    elif motion_type == 'ball':
+        input_or_joint.setAsBallJointMotion(pitch_axis, yaw_axis)
+    elif motion_type == 'planar':
+        input_or_joint.setAsPlanarJointMotion(normal_axis)
+    elif motion_type == 'pin_slot':
+        input_or_joint.setAsPinSlotJointMotion(axis, slide_axis)
+    else:
+        raise ValueError(f'Invalid motion_type "{motion_type}". Use: rigid, revolute, slider, cylindrical, ball, planar, pin_slot')
+
+def _handle_create_joint(params):
+    """Create a joint between two components"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        # Resolve geometry for both sides
+        geo1 = _resolve_joint_geometry(params['geometry_one'])
+        geo2 = _resolve_joint_geometry(params['geometry_two'])
+
+        # Create joint input
+        joint_input = root.joints.createInput(geo1, geo2)
+
+        # Set motion type
+        _set_joint_motion_type(joint_input, params)
+
+        # Set offset/angle/flip
+        if 'offset' in params:
+            joint_input.offset = adsk.core.ValueInput.createByReal(params['offset'])
+        if 'angle' in params:
+            joint_input.angle = adsk.core.ValueInput.createByReal(math.radians(params['angle']))
+        if params.get('is_flipped', False):
+            joint_input.isFlipped = True
+
+        # Create
+        joint = root.joints.add(joint_input)
+
+        # Set name
+        if 'name' in params:
+            joint.name = params['name']
+
+        # Return info
+        motion_info = _get_joint_motion_info(joint)
+        return {
+            'status': 'success',
+            'data': {
+                'name': joint.name,
+                'occurrence_one': joint.occurrenceOne.name if joint.occurrenceOne else None,
+                'occurrence_two': joint.occurrenceTwo.name if joint.occurrenceTwo else None,
+                'is_locked': joint.isLocked,
+                'is_suppressed': joint.isSuppressed,
+                **motion_info
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_create_as_built_joint(params):
+    """Create an as-built joint between two pre-positioned occurrences"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        # Resolve occurrences
+        occ1, t1 = _resolve_element_path(params['occurrence_one'])
+        occ2, t2 = _resolve_element_path(params['occurrence_two'])
+        if t1 != 'Occurrence':
+            raise ValueError(f'occurrence_one must be an Occurrence, got {t1}')
+        if t2 != 'Occurrence':
+            raise ValueError(f'occurrence_two must be an Occurrence, got {t2}')
+
+        # Optional geometry
+        geo = None
+        if 'geometry' in params:
+            geo = _resolve_joint_geometry(params['geometry'])
+
+        # Create input
+        abj_input = root.asBuiltJoints.createInput(occ1, occ2, geo)
+
+        # Set motion type
+        _set_joint_motion_type(abj_input, params)
+
+        # Create
+        abj = root.asBuiltJoints.add(abj_input)
+
+        if 'name' in params:
+            abj.name = params['name']
+
+        motion_info = _get_joint_motion_info(abj)
+        return {
+            'status': 'success',
+            'data': {
+                'name': abj.name,
+                'occurrence_one': occ1.name,
+                'occurrence_two': occ2.name,
+                **motion_info
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_drive_joint(params):
+    """Drive a joint to specific values"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        joint, _ = _find_joint_by_name(root, params['joint_name'])
+        motion = joint.jointMotion
+        jtype = motion.jointType
+
+        animate_steps = params.get('animate_steps', 0)
+
+        if jtype == 1:  # Revolute
+            m = adsk.fusion.RevoluteJointMotion.cast(motion)
+            if 'rotation' in params:
+                target = math.radians(params['rotation'])
+                if animate_steps > 0:
+                    start = m.rotationValue
+                    for i in range(1, animate_steps + 1):
+                        m.rotationValue = start + (target - start) * i / animate_steps
+                        adsk.doEvents()
+                else:
+                    m.rotationValue = target
+
+        elif jtype == 2:  # Slider
+            m = adsk.fusion.SliderJointMotion.cast(motion)
+            if 'slide' in params:
+                target = params['slide']
+                if animate_steps > 0:
+                    start = m.slideValue
+                    for i in range(1, animate_steps + 1):
+                        m.slideValue = start + (target - start) * i / animate_steps
+                        adsk.doEvents()
+                else:
+                    m.slideValue = target
+
+        elif jtype == 3:  # Cylindrical
+            m = adsk.fusion.CylindricalJointMotion.cast(motion)
+            if 'rotation' in params:
+                target = math.radians(params['rotation'])
+                if animate_steps > 0:
+                    start = m.rotationValue
+                    for i in range(1, animate_steps + 1):
+                        m.rotationValue = start + (target - start) * i / animate_steps
+                        adsk.doEvents()
+                else:
+                    m.rotationValue = target
+            if 'slide' in params:
+                target = params['slide']
+                if animate_steps > 0:
+                    start = m.slideValue
+                    for i in range(1, animate_steps + 1):
+                        m.slideValue = start + (target - start) * i / animate_steps
+                        adsk.doEvents()
+                else:
+                    m.slideValue = target
+
+        elif jtype == 4:  # PinSlot
+            m = adsk.fusion.PinSlotJointMotion.cast(motion)
+            if 'rotation' in params:
+                m.rotationValue = math.radians(params['rotation'])
+            if 'slide' in params:
+                m.slideValue = params['slide']
+
+        elif jtype == 5:  # Planar
+            m = adsk.fusion.PlanarJointMotion.cast(motion)
+            if 'primary_slide' in params:
+                m.primarySlideValue = params['primary_slide']
+            if 'secondary_slide' in params:
+                m.secondarySlideValue = params['secondary_slide']
+            if 'rotation' in params:
+                m.rotationValue = math.radians(params['rotation'])
+
+        elif jtype == 6:  # Ball
+            m = adsk.fusion.BallJointMotion.cast(motion)
+            if 'pitch' in params:
+                m.pitchValue = math.radians(params['pitch'])
+            if 'yaw' in params:
+                m.yawValue = math.radians(params['yaw'])
+            if 'roll' in params:
+                m.rollValue = math.radians(params['roll'])
+
+        elif jtype == 0:  # Rigid
+            return {'status': 'error', 'message': 'Cannot drive a rigid joint'}
+
+        motion_info = _get_joint_motion_info(joint)
+        return {
+            'status': 'success',
+            'data': {
+                'name': joint.name,
+                **motion_info
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_set_joint_limits(params):
+    """Set limits on a joint's degrees of freedom"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        joint, _ = _find_joint_by_name(root, params['joint_name'])
+        motion = joint.jointMotion
+        jtype = motion.jointType
+        dof = params.get('dof', 'rotation').lower()
+
+        # Map DOF name to the correct JointLimits object
+        limits = None
+        is_angular = True  # True = degrees, False = cm
+
+        if jtype == 1:  # Revolute
+            m = adsk.fusion.RevoluteJointMotion.cast(motion)
+            if dof == 'rotation':
+                limits = m.rotationLimits
+        elif jtype == 2:  # Slider
+            m = adsk.fusion.SliderJointMotion.cast(motion)
+            if dof == 'slide':
+                limits = m.slideLimits
+                is_angular = False
+        elif jtype == 3:  # Cylindrical
+            m = adsk.fusion.CylindricalJointMotion.cast(motion)
+            if dof == 'rotation':
+                limits = m.rotationLimits
+            elif dof == 'slide':
+                limits = m.slideLimits
+                is_angular = False
+        elif jtype == 4:  # PinSlot
+            m = adsk.fusion.PinSlotJointMotion.cast(motion)
+            if dof == 'rotation':
+                limits = m.rotationLimits
+            elif dof == 'slide':
+                limits = m.slideLimits
+                is_angular = False
+        elif jtype == 5:  # Planar
+            m = adsk.fusion.PlanarJointMotion.cast(motion)
+            if dof == 'rotation':
+                limits = m.rotationLimits
+            elif dof == 'primary_slide':
+                limits = m.primarySlideLimits
+                is_angular = False
+            elif dof == 'secondary_slide':
+                limits = m.secondarySlideLimits
+                is_angular = False
+        elif jtype == 6:  # Ball
+            m = adsk.fusion.BallJointMotion.cast(motion)
+            if dof == 'pitch':
+                limits = m.pitchLimits
+            elif dof == 'yaw':
+                limits = m.yawLimits
+            elif dof == 'roll':
+                limits = m.rollLimits
+
+        if limits is None:
+            raise ValueError(f'DOF "{dof}" not valid for this joint motion type')
+
+        # Apply limit settings
+        def convert(val):
+            return math.radians(val) if is_angular else val
+
+        if 'min_enabled' in params:
+            limits.isMinimumValueEnabled = params['min_enabled']
+        if 'min_value' in params:
+            limits.isMinimumValueEnabled = True
+            limits.minimumValue = convert(params['min_value'])
+        if 'max_enabled' in params:
+            limits.isMaximumValueEnabled = params['max_enabled']
+        if 'max_value' in params:
+            limits.isMaximumValueEnabled = True
+            limits.maximumValue = convert(params['max_value'])
+        if 'rest_enabled' in params:
+            limits.isRestValueEnabled = params['rest_enabled']
+        if 'rest_value' in params:
+            limits.isRestValueEnabled = True
+            limits.restValue = convert(params['rest_value'])
+
+        motion_info = _get_joint_motion_info(joint)
+        return {
+            'status': 'success',
+            'data': {
+                'name': joint.name,
+                **motion_info
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_modify_joint(params):
+    """Modify joint properties: lock, suppress, rename, change motion type"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        joint, kind = _find_joint_by_name(root, params['joint_name'])
+
+        if 'is_locked' in params:
+            joint.isLocked = params['is_locked']
+        if 'is_suppressed' in params:
+            joint.isSuppressed = params['is_suppressed']
+        if 'new_name' in params:
+            joint.name = params['new_name']
+        if 'is_flipped' in params:
+            joint.isFlipped = params['is_flipped']
+        if 'motion_type' in params:
+            _set_joint_motion_type(joint, params)
+
+        motion_info = _get_joint_motion_info(joint)
+        return {
+            'status': 'success',
+            'data': {
+                'name': joint.name,
+                'kind': kind,
+                'is_locked': joint.isLocked,
+                'is_suppressed': joint.isSuppressed,
+                'health': str(joint.healthState),
+                **motion_info
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_create_joint_origin(params):
+    """Create a joint origin on a component"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        # Resolve component
+        comp = root
+        if 'component_path' in params and params['component_path'] != 'root':
+            element, etype = _resolve_element_path(params['component_path'])
+            if etype == 'Occurrence':
+                comp = element.component
+            elif hasattr(element, 'jointOrigins'):
+                comp = element
+            else:
+                raise ValueError(f'Cannot create joint origin on {etype}')
+
+        # Resolve geometry
+        geo = _resolve_joint_geometry(params['geometry'])
+
+        # Create input
+        jo_input = comp.jointOrigins.createInput(geo)
+
+        if 'offset_x' in params:
+            jo_input.offsetX = adsk.core.ValueInput.createByReal(params['offset_x'])
+        if 'offset_y' in params:
+            jo_input.offsetY = adsk.core.ValueInput.createByReal(params['offset_y'])
+        if 'offset_z' in params:
+            jo_input.offsetZ = adsk.core.ValueInput.createByReal(params['offset_z'])
+        if 'angle' in params:
+            jo_input.angle = adsk.core.ValueInput.createByReal(math.radians(params['angle']))
+        if params.get('is_flipped', False):
+            jo_input.isFlipped = True
+
+        jo = comp.jointOrigins.add(jo_input)
+
+        if 'name' in params:
+            jo.name = params['name']
+
+        return {
+            'status': 'success',
+            'data': {
+                'name': jo.name,
+                'component': comp.name,
+                'origin': {
+                    'x': jo.geometry.origin.x,
+                    'y': jo.geometry.origin.y,
+                    'z': jo.geometry.origin.z
+                }
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_create_rigid_group(params):
+    """Create a rigid group from occurrences"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        occ_paths = params['occurrence_paths']
+        include_children = params.get('include_children', False)
+
+        occs = adsk.core.ObjectCollection.create()
+        occ_names = []
+        for path in occ_paths:
+            occ, etype = _resolve_element_path(path)
+            if etype != 'Occurrence':
+                raise ValueError(f'Path "{path}" is not an occurrence (got {etype})')
+            occs.add(occ)
+            occ_names.append(occ.name)
+
+        rg = root.rigidGroups.add(occs, include_children)
+
+        if 'name' in params:
+            rg.name = params['name']
+
+        return {
+            'status': 'success',
+            'data': {
+                'name': rg.name,
+                'occurrences': occ_names,
+                'include_children': include_children
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_create_motion_link(params):
+    """Create a motion link between two joints"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        joint1, _ = _find_joint_by_name(root, params['joint_one'])
+
+        joint2 = None
+        if 'joint_two' in params and params['joint_two']:
+            joint2, _ = _find_joint_by_name(root, params['joint_two'])
+
+        ml_input = root.motionLinks.createInput(joint1, joint2)
+
+        if 'value_one' in params:
+            ml_input.valueOne = adsk.core.ValueInput.createByString(params['value_one'])
+        if 'value_two' in params:
+            ml_input.valueTwo = adsk.core.ValueInput.createByString(params['value_two'])
+        if params.get('is_reversed', False):
+            ml_input.isReversed = True
+
+        ml = root.motionLinks.add(ml_input)
+
+        if 'name' in params:
+            ml.name = params['name']
+
+        return {
+            'status': 'success',
+            'data': {
+                'name': ml.name,
+                'joint_one': joint1.name,
+                'joint_two': joint2.name if joint2 else None,
+                'is_reversed': ml.isReversed
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_set_design_type(params):
+    """Switch between Parametric and Direct design modes"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        raise ValueError('No active design')
+
+    mode = params.get('mode', '').lower()
+    if mode == 'parametric':
+        design.designType = adsk.fusion.DesignTypes.ParametricDesignType
+    elif mode == 'direct':
+        design.designType = adsk.fusion.DesignTypes.DirectDesignType
+    else:
+        raise ValueError(f"Invalid mode '{mode}'. Use 'parametric' or 'direct'.")
+
+    current = 'Parametric' if design.designType == adsk.fusion.DesignTypes.ParametricDesignType else 'Direct'
+    return {'status': 'success', 'designType': current, 'message': f'Design mode set to {current}'}
+
 def _resolve_element_path(path):
     """
     Resolve element path to object
@@ -2893,17 +3537,32 @@ def _handle_get_tree(params):
 
     # Joints
     for joint in root.joints:
-        tree['joints'].append({
+        joint_data = {
             'name': safe_get(joint, 'name', 'Unnamed'),
             'isSuppressed': safe_get(joint, 'isSuppressed', False),
-            'jointMotion': safe_get(joint.jointMotion, 'jointType', None)
-        })
+            'isLocked': safe_get(joint, 'isLocked', False),
+            'occurrenceOne': safe_get(joint.occurrenceOne, 'name', None) if joint.occurrenceOne else None,
+            'occurrenceTwo': safe_get(joint.occurrenceTwo, 'name', None) if joint.occurrenceTwo else None,
+        }
+        try:
+            joint_data.update(_get_joint_motion_info(joint))
+        except:
+            joint_data['jointMotion'] = safe_get(joint.jointMotion, 'jointType', None)
+        tree['joints'].append(joint_data)
 
     # AsBuilt Joints
     for joint in root.asBuiltJoints:
-        tree['asBuiltJoints'].append({
-            'name': safe_get(joint, 'name', 'Unnamed')
-        })
+        abj_data = {
+            'name': safe_get(joint, 'name', 'Unnamed'),
+            'isSuppressed': safe_get(joint, 'isSuppressed', False),
+            'occurrenceOne': safe_get(joint.occurrenceOne, 'name', None) if joint.occurrenceOne else None,
+            'occurrenceTwo': safe_get(joint.occurrenceTwo, 'name', None) if joint.occurrenceTwo else None,
+        }
+        try:
+            abj_data.update(_get_joint_motion_info(joint))
+        except:
+            pass
+        tree['asBuiltJoints'].append(abj_data)
 
     # User Parameters (only for parametric designs)
     try:
@@ -3399,6 +4058,24 @@ class MainThreadExecutor(adsk.core.CustomEventHandler):
                 result = _handle_get_edge_relationships(event_args.get('params', {}))
             elif operation == 'create_extrude':
                 result = _handle_create_extrude(event_args.get('params', {}))
+            elif operation == 'set_design_type':
+                result = _handle_set_design_type(event_args.get('params', {}))
+            elif operation == 'create_joint':
+                result = _handle_create_joint(event_args.get('params', {}))
+            elif operation == 'create_as_built_joint':
+                result = _handle_create_as_built_joint(event_args.get('params', {}))
+            elif operation == 'drive_joint':
+                result = _handle_drive_joint(event_args.get('params', {}))
+            elif operation == 'set_joint_limits':
+                result = _handle_set_joint_limits(event_args.get('params', {}))
+            elif operation == 'modify_joint':
+                result = _handle_modify_joint(event_args.get('params', {}))
+            elif operation == 'create_joint_origin':
+                result = _handle_create_joint_origin(event_args.get('params', {}))
+            elif operation == 'create_rigid_group':
+                result = _handle_create_rigid_group(event_args.get('params', {}))
+            elif operation == 'create_motion_link':
+                result = _handle_create_motion_link(event_args.get('params', {}))
             else:
                 result = {'status': 'error', 'error': f'Unknown operation: {operation}'}
 
