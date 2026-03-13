@@ -366,7 +366,7 @@ def _handle_create_as_built_joint(params):
 
         occ2_param = params.get('occurrence_two', 'root')
         if occ2_param is None or occ2_param.lower() in ('root', 'null', 'none', 'ground'):
-            occ2 = root  # Ground to root component
+            occ2 = None  # Ground to root component (API expects None, not the Component object)
         else:
             occ2, t2 = _resolve_element_path(occ2_param)
             if t2 != 'Occurrence':
