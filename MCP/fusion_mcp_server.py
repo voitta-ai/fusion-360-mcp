@@ -1805,6 +1805,184 @@ async def handle_list_tools() -> list[types.Tool]:
                 "type": "object",
                 "properties": {}
             }
+        ),
+        types.Tool(
+            name="fusion_delete_occurrence",
+            description="Delete an occurrence (component instance) from the design. Removes the occurrence and all its geometry from the assembly.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "occurrence_path": {
+                        "type": "string",
+                        "description": "Path to occurrence: 'root/children/CompName:1' or 'root/occurrences/CompName:1'"
+                    }
+                },
+                "required": ["occurrence_path"]
+            }
+        ),
+        types.Tool(
+            name="fusion_move_occurrence",
+            description="Move an occurrence by a relative vector or to an absolute position. Works directly on the occurrence transform — no feature created. Calls design.snapshots.add() to finalize in Direct mode.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "occurrence_path": {
+                        "type": "string",
+                        "description": "Path to occurrence"
+                    },
+                    "vector": {
+                        "type": "object",
+                        "description": "Relative translation vector in cm",
+                        "properties": {
+                            "x": {"type": "number", "default": 0},
+                            "y": {"type": "number", "default": 0},
+                            "z": {"type": "number", "default": 0}
+                        }
+                    },
+                    "position": {
+                        "type": "object",
+                        "description": "Absolute position in cm (alternative to vector)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        },
+                        "required": ["x", "y", "z"]
+                    }
+                },
+                "required": ["occurrence_path"]
+            }
+        ),
+        types.Tool(
+            name="fusion_rotate_occurrence",
+            description="Rotate an occurrence around an axis. Composes with existing transform.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "occurrence_path": {
+                        "type": "string",
+                        "description": "Path to occurrence"
+                    },
+                    "angle": {
+                        "type": "number",
+                        "description": "Rotation angle in degrees"
+                    },
+                    "axis": {
+                        "type": "string",
+                        "enum": ["x", "y", "z"],
+                        "description": "Rotation axis (default: z). For custom axis, use 'direction' parameter instead.",
+                        "default": "z"
+                    },
+                    "direction": {
+                        "type": "object",
+                        "description": "Custom rotation axis direction vector (overrides 'axis')",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        }
+                    },
+                    "origin": {
+                        "type": "object",
+                        "description": "Rotation center point in cm (default: 0,0,0)",
+                        "properties": {
+                            "x": {"type": "number", "default": 0},
+                            "y": {"type": "number", "default": 0},
+                            "z": {"type": "number", "default": 0}
+                        }
+                    }
+                },
+                "required": ["occurrence_path", "angle"]
+            }
+        ),
+        types.Tool(
+            name="fusion_set_occurrence_transform",
+            description="Set the full transform matrix on an occurrence. Can set absolute position, full 4x4 matrix, or reset to identity (origin).",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "occurrence_path": {
+                        "type": "string",
+                        "description": "Path to occurrence"
+                    },
+                    "translation": {
+                        "type": "object",
+                        "description": "Set position directly (resets rotation to identity)",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        },
+                        "required": ["x", "y", "z"]
+                    },
+                    "matrix": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "description": "Full 4x4 transform matrix as 16 floats (row-major order)"
+                    },
+                    "reset": {
+                        "type": "boolean",
+                        "description": "Reset transform to identity (moves occurrence to origin)",
+                        "default": false
+                    }
+                },
+                "required": ["occurrence_path"]
+            }
+        ),
+        types.Tool(
+            name="fusion_create_component",
+            description="Create a new empty component in the root assembly. Returns the occurrence path for use in other tools.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name for the new component"
+                    },
+                    "position": {
+                        "type": "object",
+                        "description": "Initial position in cm (default: origin)",
+                        "properties": {
+                            "x": {"type": "number", "default": 0},
+                            "y": {"type": "number", "default": 0},
+                            "z": {"type": "number", "default": 0}
+                        }
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="fusion_copy_occurrence",
+            description="Copy an occurrence — creates a new instance of the same component. Useful for creating patterns or duplicating parts.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "source_path": {
+                        "type": "string",
+                        "description": "Path to the occurrence to copy"
+                    },
+                    "position": {
+                        "type": "object",
+                        "description": "Absolute position for the copy in cm",
+                        "properties": {
+                            "x": {"type": "number"},
+                            "y": {"type": "number"},
+                            "z": {"type": "number"}
+                        },
+                        "required": ["x", "y", "z"]
+                    },
+                    "offset": {
+                        "type": "object",
+                        "description": "Offset from original position (alternative to position)",
+                        "properties": {
+                            "x": {"type": "number", "default": 0},
+                            "y": {"type": "number", "default": 0},
+                            "z": {"type": "number", "default": 0}
+                        }
+                    }
+                },
+                "required": ["source_path"]
+            }
         )
     ]
 
@@ -1883,7 +2061,13 @@ async def handle_call_tool(
         'fusion_get_design_type': 'get_design_type',
         'fusion_get_joint_details': 'get_joint_details',
         'fusion_get_grounding_state': 'get_grounding_state',
-        'fusion_undo': 'undo'
+        'fusion_undo': 'undo',
+        'fusion_delete_occurrence': 'delete_occurrence',
+        'fusion_move_occurrence': 'move_occurrence',
+        'fusion_rotate_occurrence': 'rotate_occurrence',
+        'fusion_set_occurrence_transform': 'set_occurrence_transform',
+        'fusion_create_component': 'create_component',
+        'fusion_copy_occurrence': 'copy_occurrence'
     }
 
     if name not in operation_map:

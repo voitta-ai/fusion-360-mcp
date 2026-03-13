@@ -1020,6 +1020,271 @@ def _handle_undo(params):
     except Exception as e:
         return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
 
+def _handle_delete_occurrence(params):
+    """Delete an occurrence (component instance) from the design"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        occ_path = params['occurrence_path']
+        occ, etype = _resolve_element_path(occ_path)
+        if etype != 'Occurrence':
+            raise ValueError(f'Expected Occurrence, got {etype}')
+
+        name = occ.name
+        success = occ.deleteMe()
+        if success:
+            return {'status': 'success', 'data': {'deleted': name}}
+        else:
+            return {'status': 'error', 'message': f'Failed to delete occurrence "{name}". It may be referenced by joints or other features.'}
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_move_occurrence(params):
+    """Move an occurrence by a translation vector or to an absolute position"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        occ_path = params['occurrence_path']
+        occ, etype = _resolve_element_path(occ_path)
+        if etype != 'Occurrence':
+            raise ValueError(f'Expected Occurrence, got {etype}')
+
+        transform = occ.transform2 if hasattr(occ, 'transform2') else occ.transform
+
+        if 'vector' in params:
+            # Relative translation
+            v = params['vector']
+            translation = transform.translation
+            translation.x += v.get('x', 0)
+            translation.y += v.get('y', 0)
+            translation.z += v.get('z', 0)
+            transform.translation = translation
+        elif 'position' in params:
+            # Absolute position
+            p = params['position']
+            transform.translation = adsk.core.Vector3D.create(p['x'], p['y'], p['z'])
+
+        if hasattr(occ, 'transform2'):
+            occ.transform2 = transform
+        else:
+            occ.transform = transform
+
+        # Snapshot for direct mode
+        try:
+            design.snapshots.add()
+        except:
+            pass
+
+        # Read back actual position
+        t = occ.transform2 if hasattr(occ, 'transform2') else occ.transform
+        pos = t.translation
+        return {
+            'status': 'success',
+            'data': {
+                'name': occ.name,
+                'position': {'x': pos.x, 'y': pos.y, 'z': pos.z}
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_rotate_occurrence(params):
+    """Rotate an occurrence around an axis"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    try:
+        occ_path = params['occurrence_path']
+        occ, etype = _resolve_element_path(occ_path)
+        if etype != 'Occurrence':
+            raise ValueError(f'Expected Occurrence, got {etype}')
+
+        angle_deg = params['angle']
+        angle_rad = math.radians(angle_deg)
+
+        # Rotation axis
+        axis_str = params.get('axis', 'z').lower()
+        origin_data = params.get('origin', {'x': 0, 'y': 0, 'z': 0})
+        origin = adsk.core.Point3D.create(origin_data['x'], origin_data['y'], origin_data['z'])
+
+        if axis_str == 'x':
+            direction = adsk.core.Vector3D.create(1, 0, 0)
+        elif axis_str == 'y':
+            direction = adsk.core.Vector3D.create(0, 1, 0)
+        elif axis_str == 'z':
+            direction = adsk.core.Vector3D.create(0, 0, 1)
+        elif 'direction' in params:
+            d = params['direction']
+            direction = adsk.core.Vector3D.create(d['x'], d['y'], d['z'])
+            direction.normalize()
+        else:
+            direction = adsk.core.Vector3D.create(0, 0, 1)
+
+        # Get current transform, apply rotation
+        transform = occ.transform2 if hasattr(occ, 'transform2') else occ.transform
+        rotation = adsk.core.Matrix3D.create()
+        rotation.setToRotation(angle_rad, direction, origin)
+
+        # Compose: rotation * current transform
+        rotation.transformBy(transform)
+
+        if hasattr(occ, 'transform2'):
+            occ.transform2 = rotation
+        else:
+            occ.transform = rotation
+
+        try:
+            design.snapshots.add()
+        except:
+            pass
+
+        return {
+            'status': 'success',
+            'data': {
+                'name': occ.name,
+                'rotation_deg': angle_deg,
+                'axis': axis_str
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_set_occurrence_transform(params):
+    """Set the full 4x4 transform matrix on an occurrence, or reset to identity"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    try:
+        occ_path = params['occurrence_path']
+        occ, etype = _resolve_element_path(occ_path)
+        if etype != 'Occurrence':
+            raise ValueError(f'Expected Occurrence, got {etype}')
+
+        if params.get('reset', False):
+            transform = adsk.core.Matrix3D.create()  # Identity
+        elif 'matrix' in params:
+            # Full 16-element matrix (row-major)
+            m = params['matrix']
+            transform = adsk.core.Matrix3D.create()
+            transform.setWithArray(m)
+        elif 'translation' in params:
+            # Just set translation, keep rotation at identity
+            t = params['translation']
+            transform = adsk.core.Matrix3D.create()
+            transform.translation = adsk.core.Vector3D.create(t['x'], t['y'], t['z'])
+        else:
+            return {'status': 'error', 'message': 'Provide "matrix" (16 floats), "translation" ({x,y,z}), or "reset": true'}
+
+        if hasattr(occ, 'transform2'):
+            occ.transform2 = transform
+        else:
+            occ.transform = transform
+
+        try:
+            design.snapshots.add()
+        except:
+            pass
+
+        t = occ.transform2 if hasattr(occ, 'transform2') else occ.transform
+        pos = t.translation
+        return {
+            'status': 'success',
+            'data': {
+                'name': occ.name,
+                'position': {'x': pos.x, 'y': pos.y, 'z': pos.z}
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_create_component(params):
+    """Create a new empty component"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        # Create new occurrence with new component
+        transform = adsk.core.Matrix3D.create()
+        if 'position' in params:
+            p = params['position']
+            transform.translation = adsk.core.Vector3D.create(p.get('x', 0), p.get('y', 0), p.get('z', 0))
+
+        new_occ = root.occurrences.addNewComponent(transform)
+        new_comp = new_occ.component
+
+        if 'name' in params:
+            new_comp.name = params['name']
+
+        return {
+            'status': 'success',
+            'data': {
+                'component_name': new_comp.name,
+                'occurrence_name': new_occ.name,
+                'occurrence_path': f'root/children/{new_occ.name}'
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_copy_occurrence(params):
+    """Copy an existing occurrence (creates a new instance of the same component)"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        source_path = params['source_path']
+        source_occ, etype = _resolve_element_path(source_path)
+        if etype != 'Occurrence':
+            raise ValueError(f'Expected Occurrence, got {etype}')
+
+        # Set transform for the copy
+        transform = adsk.core.Matrix3D.create()
+        if 'position' in params:
+            p = params['position']
+            transform.translation = adsk.core.Vector3D.create(p.get('x', 0), p.get('y', 0), p.get('z', 0))
+        elif 'offset' in params:
+            # Copy at offset from original
+            orig_transform = source_occ.transform2 if hasattr(source_occ, 'transform2') else source_occ.transform
+            o = params['offset']
+            pos = orig_transform.translation
+            transform.translation = adsk.core.Vector3D.create(
+                pos.x + o.get('x', 0), pos.y + o.get('y', 0), pos.z + o.get('z', 0))
+        else:
+            # Copy at same position
+            transform = source_occ.transform2 if hasattr(source_occ, 'transform2') else source_occ.transform
+
+        new_occ = root.occurrences.addExistingComponent(source_occ.component, transform)
+
+        return {
+            'status': 'success',
+            'data': {
+                'source': source_occ.name,
+                'new_occurrence': new_occ.name,
+                'component': new_occ.component.name,
+                'occurrence_path': f'root/children/{new_occ.name}'
+            }
+        }
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
 def _handle_get_design_type(params):
     """Get the current design type"""
     app = adsk.core.Application.get()
@@ -4466,6 +4731,18 @@ class MainThreadExecutor(adsk.core.CustomEventHandler):
                 result = _handle_get_grounding_state(event_args.get('params', {}))
             elif operation == 'undo':
                 result = _handle_undo(event_args.get('params', {}))
+            elif operation == 'delete_occurrence':
+                result = _handle_delete_occurrence(event_args.get('params', {}))
+            elif operation == 'move_occurrence':
+                result = _handle_move_occurrence(event_args.get('params', {}))
+            elif operation == 'rotate_occurrence':
+                result = _handle_rotate_occurrence(event_args.get('params', {}))
+            elif operation == 'set_occurrence_transform':
+                result = _handle_set_occurrence_transform(event_args.get('params', {}))
+            elif operation == 'create_component':
+                result = _handle_create_component(event_args.get('params', {}))
+            elif operation == 'copy_occurrence':
+                result = _handle_copy_occurrence(event_args.get('params', {}))
             else:
                 result = {'status': 'error', 'error': f'Unknown operation: {operation}'}
 
