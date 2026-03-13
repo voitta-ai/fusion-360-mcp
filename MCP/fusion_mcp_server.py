@@ -1390,7 +1390,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_create_as_built_joint",
-            description="Create an as-built joint between two occurrences that are already positioned correctly. Unlike regular joints, as-built joints do NOT move components.",
+            description="Create an as-built joint between two occurrences that are already positioned correctly. Unlike regular joints, as-built joints do NOT move components. Use 'root' as occurrence_two to ground a component to the root.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1400,7 +1400,7 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                     "occurrence_two": {
                         "type": "string",
-                        "description": "Path to second occurrence"
+                        "description": "Path to second occurrence, or 'root'/'null'/'ground' to ground the component to the root component"
                     },
                     "geometry": {
                         "type": "object",
@@ -1770,6 +1770,41 @@ async def handle_list_tools() -> list[types.Tool]:
                 "type": "object",
                 "properties": {}
             }
+        ),
+        types.Tool(
+            name="fusion_get_joint_details",
+            description="Get detailed information about a single joint: axis direction, geometry origins, key points, health state, error messages, angle/offset parameters, timeline index. More detailed than get_tree.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "joint_name": {
+                        "type": "string",
+                        "description": "Name of the joint to inspect"
+                    }
+                },
+                "required": ["joint_name"]
+            }
+        ),
+        types.Tool(
+            name="fusion_get_grounding_state",
+            description="Query grounding state of occurrences without fetching the full design tree. Lightweight check for diagnostics.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "occurrence_path": {
+                        "type": "string",
+                        "description": "Path to a specific occurrence (e.g., 'root/children/Comp:1'). Omit to query all top-level occurrences."
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="fusion_undo",
+            description="Undo the last operation in Fusion 360. Useful as a safety net when a joint creation moves geometry unexpectedly or an operation produces unwanted results.",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
         )
     ]
 
@@ -1845,7 +1880,10 @@ async def handle_call_tool(
         'fusion_create_motion_link': 'create_motion_link',
         'fusion_delete_joint': 'delete_joint',
         'fusion_delete_feature': 'delete_feature',
-        'fusion_get_design_type': 'get_design_type'
+        'fusion_get_design_type': 'get_design_type',
+        'fusion_get_joint_details': 'get_joint_details',
+        'fusion_get_grounding_state': 'get_grounding_state',
+        'fusion_undo': 'undo'
     }
 
     if name not in operation_map:

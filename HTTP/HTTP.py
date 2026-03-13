@@ -155,18 +155,47 @@ def _resolve_joint_geometry(geo_params):
         # Determine face surface type
         surface = entity.geometry
         surface_type = surface.surfaceType
+
+        # Surface type names for error messages
+        surface_names = {
+            adsk.core.SurfaceTypes.PlaneSurfaceType: 'planar',
+            adsk.core.SurfaceTypes.CylinderSurfaceType: 'cylindrical',
+            adsk.core.SurfaceTypes.ConeSurfaceType: 'conical',
+            adsk.core.SurfaceTypes.SphereSurfaceType: 'spherical',
+            adsk.core.SurfaceTypes.TorusSurfaceType: 'toroidal',
+        }
+        surface_name = surface_names.get(surface_type, 'non-planar')
+
         if surface_type == adsk.core.SurfaceTypes.PlaneSurfaceType:
             geo = adsk.fusion.JointGeometry.createByPlanarFace(entity, None, key_point)
-        elif surface_type in (adsk.core.SurfaceTypes.CylinderSurfaceType,
-                              adsk.core.SurfaceTypes.ConeSurfaceType):
-            geo = adsk.fusion.JointGeometry.createByNonPlanarFace(entity, key_point)
-        elif surface_type == adsk.core.SurfaceTypes.SphereSurfaceType:
-            geo = adsk.fusion.JointGeometry.createByNonPlanarFace(entity, key_point)
-        elif surface_type == adsk.core.SurfaceTypes.TorusSurfaceType:
-            geo = adsk.fusion.JointGeometry.createByNonPlanarFace(entity, key_point)
         else:
-            # NurbsSurface or other - try non-planar
-            geo = adsk.fusion.JointGeometry.createByNonPlanarFace(entity, key_point)
+            # Non-planar faces (cylinder, cone, sphere, torus, nurbs)
+            # "center" is not valid for non-planar faces — auto-select "middle" instead
+            non_planar_key_point = key_point
+            auto_corrected = False
+            if key_point == adsk.fusion.JointKeyPointTypes.CenterKeyPoint:
+                non_planar_key_point = adsk.fusion.JointKeyPointTypes.MiddleKeyPoint
+                auto_corrected = True
+
+            geo = adsk.fusion.JointGeometry.createByNonPlanarFace(entity, non_planar_key_point)
+
+            # If it still fails, try all valid key points
+            if geo is None:
+                for fallback_kp in [adsk.fusion.JointKeyPointTypes.MiddleKeyPoint,
+                                     adsk.fusion.JointKeyPointTypes.StartKeyPoint,
+                                     adsk.fusion.JointKeyPointTypes.EndKeyPoint,
+                                     adsk.fusion.JointKeyPointTypes.CenterKeyPoint]:
+                    geo = adsk.fusion.JointGeometry.createByNonPlanarFace(entity, fallback_kp)
+                    if geo is not None:
+                        auto_corrected = True
+                        break
+
+            if geo is None:
+                raise ValueError(
+                    f'Cannot create joint geometry on {surface_name} face. '
+                    f'Valid key_points for {surface_name}: start, middle, end (not center). '
+                    f'For spherical faces, use center.')
+
     elif entity_type == 'Occurrence':
         geo = adsk.fusion.JointGeometry.createByPoint(entity.component.originConstructionPoint)
     else:
@@ -330,13 +359,18 @@ def _handle_create_as_built_joint(params):
     root = design.rootComponent
 
     try:
-        # Resolve occurrences
+        # Resolve occurrences — support "root" or null for occurrence_two to ground to root
         occ1, t1 = _resolve_element_path(params['occurrence_one'])
-        occ2, t2 = _resolve_element_path(params['occurrence_two'])
         if t1 != 'Occurrence':
             raise ValueError(f'occurrence_one must be an Occurrence, got {t1}')
-        if t2 != 'Occurrence':
-            raise ValueError(f'occurrence_two must be an Occurrence, got {t2}')
+
+        occ2_param = params.get('occurrence_two', 'root')
+        if occ2_param is None or occ2_param.lower() in ('root', 'null', 'none', 'ground'):
+            occ2 = root  # Ground to root component
+        else:
+            occ2, t2 = _resolve_element_path(occ2_param)
+            if t2 != 'Occurrence':
+                raise ValueError(f'occurrence_two must be an Occurrence or "root", got {t2}')
 
         # Optional geometry
         geo = None
@@ -839,6 +873,153 @@ def _handle_delete_feature(params):
     except Exception as e:
         return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
 
+def _handle_get_joint_details(params):
+    """Get detailed information about a single joint"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        joint, kind = _find_joint_by_name(root, params['joint_name'])
+        motion = joint.jointMotion
+        motion_info = _get_joint_motion_info(joint)
+
+        data = {
+            'name': joint.name,
+            'kind': kind,
+            'is_locked': joint.isLocked,
+            'is_suppressed': joint.isSuppressed,
+            'is_flipped': joint.isFlipped,
+            'occurrence_one': joint.occurrenceOne.name if joint.occurrenceOne else None,
+            'occurrence_two': joint.occurrenceTwo.name if joint.occurrenceTwo else None,
+            **motion_info
+        }
+
+        # Health state
+        try:
+            hs = joint.healthState
+            health_map = {0: 'Healthy', 1: 'Warning', 2: 'Error'}
+            data['health_state'] = health_map.get(hs, f'Unknown({hs})')
+            if hs != 0:
+                data['error_message'] = joint.errorOrWarningMessage or ''
+        except:
+            pass
+
+        # Joint geometry origins
+        try:
+            geo1 = joint.geometryOrOriginOne
+            if geo1:
+                geo1_data = {}
+                if hasattr(geo1, 'origin') and geo1.origin:
+                    geo1_data['origin'] = {'x': geo1.origin.x, 'y': geo1.origin.y, 'z': geo1.origin.z}
+                if hasattr(geo1, 'primaryAxisVector') and geo1.primaryAxisVector:
+                    geo1_data['z_axis'] = {'x': geo1.primaryAxisVector.x, 'y': geo1.primaryAxisVector.y, 'z': geo1.primaryAxisVector.z}
+                if hasattr(geo1, 'secondaryAxisVector') and geo1.secondaryAxisVector:
+                    geo1_data['x_axis'] = {'x': geo1.secondaryAxisVector.x, 'y': geo1.secondaryAxisVector.y, 'z': geo1.secondaryAxisVector.z}
+                if hasattr(geo1, 'keyPointType'):
+                    kp_map = {0: 'start', 1: 'middle', 2: 'end', 3: 'center'}
+                    geo1_data['key_point'] = kp_map.get(geo1.keyPointType, str(geo1.keyPointType))
+                data['geometry_one'] = geo1_data
+        except:
+            pass
+
+        try:
+            geo2 = joint.geometryOrOriginTwo
+            if geo2:
+                geo2_data = {}
+                if hasattr(geo2, 'origin') and geo2.origin:
+                    geo2_data['origin'] = {'x': geo2.origin.x, 'y': geo2.origin.y, 'z': geo2.origin.z}
+                if hasattr(geo2, 'primaryAxisVector') and geo2.primaryAxisVector:
+                    geo2_data['z_axis'] = {'x': geo2.primaryAxisVector.x, 'y': geo2.primaryAxisVector.y, 'z': geo2.primaryAxisVector.z}
+                if hasattr(geo2, 'secondaryAxisVector') and geo2.secondaryAxisVector:
+                    geo2_data['x_axis'] = {'x': geo2.secondaryAxisVector.x, 'y': geo2.secondaryAxisVector.y, 'z': geo2.secondaryAxisVector.z}
+                if hasattr(geo2, 'keyPointType'):
+                    kp_map = {0: 'start', 1: 'middle', 2: 'end', 3: 'center'}
+                    geo2_data['key_point'] = kp_map.get(geo2.keyPointType, str(geo2.keyPointType))
+                data['geometry_two'] = geo2_data
+        except:
+            pass
+
+        # Motion axis vectors
+        try:
+            if hasattr(motion, 'rotationAxisVector') and motion.rotationAxisVector:
+                v = motion.rotationAxisVector
+                data['rotation_axis_vector'] = {'x': v.x, 'y': v.y, 'z': v.z}
+            if hasattr(motion, 'slideDirectionVector') and motion.slideDirectionVector:
+                v = motion.slideDirectionVector
+                data['slide_direction_vector'] = {'x': v.x, 'y': v.y, 'z': v.z}
+            if hasattr(motion, 'normalDirectionVector') and motion.normalDirectionVector:
+                v = motion.normalDirectionVector
+                data['normal_direction_vector'] = {'x': v.x, 'y': v.y, 'z': v.z}
+        except:
+            pass
+
+        # Angle/offset parameters
+        try:
+            if joint.angle:
+                data['angle_param'] = {'value': joint.angle.value, 'expression': joint.angle.expression}
+            if joint.offset:
+                data['offset_param'] = {'value': joint.offset.value, 'expression': joint.offset.expression}
+        except:
+            pass
+
+        # Timeline
+        try:
+            data['timeline_index'] = joint.timelineObject.index
+        except:
+            pass
+
+        return {'status': 'success', 'data': data}
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_get_grounding_state(params):
+    """Query grounding state of occurrences without full get_tree"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        target = params.get('occurrence_path')
+        results = []
+
+        if target:
+            # Query a specific occurrence
+            occ, etype = _resolve_element_path(target)
+            if etype != 'Occurrence':
+                raise ValueError(f'Expected Occurrence, got {etype}')
+            results.append({
+                'name': occ.name,
+                'isGrounded': occ.isGrounded,
+                'isVisible': occ.isVisible
+            })
+        else:
+            # Query all top-level occurrences
+            for occ in root.occurrences:
+                results.append({
+                    'name': occ.name,
+                    'isGrounded': occ.isGrounded,
+                    'isVisible': occ.isVisible
+                })
+
+        return {'status': 'success', 'data': {'occurrences': results}}
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_undo(params):
+    """Undo the last operation in Fusion 360"""
+    app = adsk.core.Application.get()
+    try:
+        # Fusion API doesn't have a direct undo method, but we can use executeTextCommand
+        app.executeTextCommand(u'Commands.Start UndoCommand')
+        return {'status': 'success', 'message': 'Undo executed'}
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
 def _handle_get_design_type(params):
     """Get the current design type"""
     app = adsk.core.Application.get()
@@ -882,8 +1063,16 @@ def _handle_set_design_type(params):
     else:
         raise ValueError(f"Invalid mode '{mode}'. Use 'parametric' or 'direct'.")
 
+    # Verify the switch actually took effect
     current = 'Parametric' if design.designType == adsk.fusion.DesignTypes.ParametricDesignType else 'Direct'
+    expected = 'Parametric' if mode == 'parametric' else 'Direct'
+    if current != expected:
+        warnings.append(f'WARNING: Mode switch did not take effect. Requested "{expected}" but design is still "{current}". '
+                        f'Possible causes: mesh bodies prevent full Parametric mode, or user cancelled the confirmation dialog.')
+
     result = {'status': 'success', 'designType': current, 'previous': previous, 'message': f'Design mode set to {current}'}
+    if current != expected:
+        result['status'] = 'warning'
     if warnings:
         result['warnings'] = warnings
     return result
@@ -3666,7 +3855,7 @@ def _handle_get_tree(params):
     tree = {
         'name': root.name,
         'type': 'root_component',
-        'designType': 'Parametric' if safe_get(design, 'designType', None) == 0 else 'Direct/Mesh',
+        'designType': 'Parametric' if design.designType == adsk.fusion.DesignTypes.ParametricDesignType else 'Direct',
         'component': get_component_data(root),
         'joints': [],
         'asBuiltJoints': [],
@@ -4267,6 +4456,12 @@ class MainThreadExecutor(adsk.core.CustomEventHandler):
                 result = _handle_delete_feature(event_args.get('params', {}))
             elif operation == 'get_design_type':
                 result = _handle_get_design_type(event_args.get('params', {}))
+            elif operation == 'get_joint_details':
+                result = _handle_get_joint_details(event_args.get('params', {}))
+            elif operation == 'get_grounding_state':
+                result = _handle_get_grounding_state(event_args.get('params', {}))
+            elif operation == 'undo':
+                result = _handle_undo(event_args.get('params', {}))
             else:
                 result = {'status': 'error', 'error': f'Unknown operation: {operation}'}
 
