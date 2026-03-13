@@ -1923,7 +1923,7 @@ async def handle_list_tools() -> list[types.Tool]:
                     "reset": {
                         "type": "boolean",
                         "description": "Reset transform to identity (moves occurrence to origin)",
-                        "default": false
+                        "default": False
                     }
                 },
                 "required": ["occurrence_path"]
