@@ -214,8 +214,23 @@ Mutating operations (extrude, revolve, fillet, etc.) return created/affected bod
 
 ## Notes for LLM Integration
 
-1. **Always measure before placing** — use `fusion_get_face_info` and `fusion_measure_distance` to get exact coordinates. Never estimate positions.
-2. **Use multiview screenshots** — `fusion_screenshot_multiview` gives front/right/top/iso in one call, far better for spatial understanding than a single angle.
-3. **Decompose 3D into 2D** — select a face, sketch on it, then extrude. Don't try to reason about 3D coordinates directly.
-4. **Check your work** — after each major operation, take a screenshot and read the tree to verify state.
-5. **Use find_faces/edges_by_criteria** — instead of guessing face indices, search by normal direction, area, or proximity.
+### Spatial Reasoning Best Practices (from research)
+
+1. **Always measure before placing** — use `fusion_get_face_info` and `fusion_measure_distance` to get exact coordinates in cm. Never estimate or guess positions.
+2. **Multi-view verification after every change** — `fusion_screenshot_multiview` gives front/right/top/iso in one call. Research shows multi-view feedback dramatically improves modeling accuracy vs single-view. Use after every geometry-modifying operation.
+3. **Decompose 3D into 2D** — sketch on a face, then extrude. Don't try to reason about 3D coordinates directly. Sketch coordinates are 2D in the plane's local frame.
+4. **Search by criteria, never guess indices** — use `fusion_find_faces_by_criteria` (by normal, area, proximity) and `fusion_find_edges_by_criteria` (by length, type, direction) instead of guessing face/edge indices.
+5. **Read the tree first** — `fusion_get_tree` returns transforms, bounding boxes, physical properties, and joint references. Use it as your primary spatial understanding tool before making changes.
+6. **Structured error recovery** — error responses include `suggestion` fields with actionable fixes. Read them before retrying.
+
+### Units & Coordinate Frames
+
+- **All distances**: cm (Fusion 360 internal unit)
+- **All angles**: degrees in tool inputs (converted internally to radians)
+- **Sketch coordinates**: 2D in the sketch plane's local frame — NOT world 3D. The plane's origin becomes (0,0).
+- **World coordinates**: returned by `get_tree` (transforms, bounding boxes), `get_face_info` (centroids), `get_edge_info` (start/end points)
+- **Fusion 360 default orientation**: Y-up in the viewport, but construction planes use standard XY/XZ/YZ naming
+
+### JSON Serialization
+
+Research (CAD-Assistant, 2024) shows JSON with point-based parameterization is optimal for LLM geometric reasoning. All tool responses use this format — geometry is always returned with explicit coordinates, not just indices.

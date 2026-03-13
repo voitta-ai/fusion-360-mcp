@@ -65,7 +65,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_screenshot",
-            description="Capture a screenshot of the current Fusion 360 viewport. Returns an image.",
+            description="Capture a screenshot of the current Fusion 360 viewport. Returns a PNG image. IMPORTANT: Always take a screenshot after geometry-modifying operations to verify the result visually. Single-view screenshots can miss errors — prefer fusion_screenshot_multiview for spatial verification.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -137,7 +137,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_get_tree",
-            description="Get the complete design tree with ALL elements: components, occurrences, bodies (BRep & mesh), sketches, construction geometry, features, joints, and parameters. Comprehensive hierarchical structure of the entire design.",
+            description="Get the complete design tree as JSON. Returns: components, occurrences (with transforms, bounding boxes, physical properties, opacity, grounding state), bodies (BRep & mesh with volume/area), sketches, construction geometry, features, joints (with health/geometry), and parameters. All coordinates in cm. Use this as your primary spatial understanding tool — read the tree before making changes.",
             inputSchema={
                 "type": "object",
                 "properties": {}
@@ -145,7 +145,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_set_element_properties",
-            description="Set properties for any design element: visibility, grounding, groundToParent, selectability, opacity. Use paths from fusion_get_tree to identify elements. Examples: 'root/bodies/Body1', 'root/occurrences/Component1:1'.",
+            description="Set properties for any design element. Supports: visibility (isVisible), grounding (isGrounded, isGroundToParent), selectability (isSelectable), opacity. Use paths from fusion_get_tree. Examples: 'root/bodies/Body1', 'root/occurrences/Component1:1'.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -181,7 +181,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_measure_distance",
-            description="Measure distance between two entities (points, edges). Returns precise measurements with coordinates.",
+            description="Measure distance between two entities. Returns distance in cm with exact coordinates. IMPORTANT: Always measure before placing geometry — never estimate or guess positions. All coordinates in cm.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -222,7 +222,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_measure_angle",
-            description="Measure angle between two edges or faces. Returns angle in degrees or radians.",
+            description="Measure angle between two edges or faces. Returns angle in degrees and radians with direction vectors. Use to verify angular relationships before and after operations.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -258,7 +258,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_get_edge_info",
-            description="Get detailed information about edge(s): length, start/end points, direction, curve type. Can list all edges on a body with indices.",
+            description="Get edge details: length (cm), start/end points (cm), direction vector, curve type (line/arc/circle/ellipse/spline), radius for arcs. Can list all edges on a body with indices.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -280,7 +280,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_get_face_info",
-            description="Get detailed information about face(s): area, normal vector, center point, surface type. Can list all faces on a body with indices.",
+            description="Get face details: area (cm²), centroid (cm), surface type (planar/cylindrical/conical/spherical/toroidal), normal vector, radius for curved surfaces. Can list all faces on a body with indices.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -302,7 +302,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_find_edges_by_criteria",
-            description="Search for edges matching criteria: length, curve type, location, orientation. Returns array of matching edges with full info and paths. Useful for finding specific geometry patterns.",
+            description="Search for edges matching criteria: length range (cm), curve type, proximity to point (cm), direction (parallel_to, perpendicular_to). Returns matching edges with full geometry info and paths. PREFERRED over guessing edge indices — always search by criteria.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -377,7 +377,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_find_faces_by_criteria",
-            description="Search for faces matching criteria: area, surface type, normal direction. Returns array of matching faces with full info and paths. Useful for finding specific surface patterns.",
+            description="Search for faces matching criteria: area range (cm²), surface type, normal direction, proximity to point (cm). Returns matching faces with full geometry info and paths. PREFERRED over guessing face indices — always search by criteria.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -443,7 +443,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_create_plane",
-            description="Create construction plane: offset from existing plane, at angle, through three points, or perpendicular to edge. Returns path to created plane.",
+            description="Create a construction plane. Modes: offset (distance in cm from reference plane), angle (degrees around axis), three_points (3 world-space points in cm), perpendicular (to edge at point). Returns path to created plane for use in sketches.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -554,7 +554,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_move_body",
-            description="Move a body by a translation vector. Non-destructive transform operation that creates a timeline feature.",
+            description="Translate a body by a vector. All distances in cm. Creates a timeline feature. Verify result with fusion_screenshot after moving.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -578,7 +578,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_rotate_body",
-            description="Rotate a body around an axis by a specified angle. Non-destructive transform operation that creates a timeline feature.",
+            description="Rotate a body around an axis by specified angle in degrees. Positive = counter-clockwise when looking along axis direction. Creates a timeline feature.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -659,7 +659,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_boolean_operation",
-            description="Perform boolean operation (join, cut, intersect) between two bodies. Modifies the target body and optionally consumes the tool body. Modifies the design timeline.",
+            description="Boolean operation between two bodies: join (union), cut (subtract tool from target), intersect (keep overlap only). All bodies must be in the same component. Modifies the design timeline.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -687,7 +687,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_create_extrude",
-            description="Create an extrusion feature from a sketch profile. Supports all extent types, directions, operations, and taper angles.",
+            description="Extrude a sketch profile along the sketch plane's normal direction. Distance in cm. Operations: new_body, join (add to existing), cut (subtract from existing), intersect, new_component. Use fusion_find_faces_by_criteria to find target faces rather than guessing indices. Verify result with fusion_screenshot_multiview.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -750,7 +750,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_create_sketch",
-            description="Create a new sketch on a construction plane. Sketches can then have geometry added via sketch_add_* tools.",
+            description="Create a new sketch on a plane or planar face. IMPORTANT: All sketch geometry (lines, circles, etc.) uses 2D coordinates in the sketch plane's local frame, NOT world 3D coordinates. The sketch plane's origin becomes (0,0). Coordinates are in cm.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -769,7 +769,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_sketch_add_line",
-            description="Add a line to an existing sketch. Requires sketch_path from fusion_create_sketch or fusion_get_tree.",
+            description="Add a line to a sketch. Coordinates are 2D in the sketch plane's local frame (cm). The sketch plane origin is (0,0). To draw on an existing face, first create a sketch on that face.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -801,7 +801,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_sketch_add_circle",
-            description="Add a circle to an existing sketch. Supports center+radius or 3-point circle.",
+            description="Add a circle to a sketch. Coordinates are 2D in the sketch plane's local frame (cm). Radius in cm. Supports center+radius or 3-point circle.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -857,7 +857,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_sketch_add_arc",
-            description="Add an arc to an existing sketch. Supports 3-point arc or center+start+sweep arc.",
+            description="Add an arc to a sketch. Coordinates are 2D in the sketch plane's local frame (cm). Supports 3-point arc or center+start+sweep arc. Sweep angle in degrees.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -921,7 +921,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_sketch_add_rectangle",
-            description="Add a rectangle to an existing sketch. Supports two-corner or center-corner rectangle.",
+            description="Add a rectangle to a sketch. Coordinates are 2D in the sketch plane's local frame (cm). Supports two-corner or center-corner rectangle.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -973,7 +973,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_sketch_add_point",
-            description="Add a point to an existing sketch at specified coordinates.",
+            description="Add a point to a sketch at specified 2D coordinates in the sketch plane's local frame (cm).",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1203,7 +1203,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_highlight_geometry",
-            description="Highlight specific geometry elements in the viewport by adding them to the selection. Useful for debugging and visualization.",
+            description="Select/highlight elements in the viewport for visual debugging. Use before taking a screenshot to visually identify specific geometry. Paths from fusion_get_tree, fusion_get_edge_info, etc.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1307,7 +1307,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_create_joint",
-            description="Create a joint between two components. Snaps geometry_one to geometry_two. Supports all 7 motion types: rigid, revolute, slider, cylindrical, ball, planar, pin_slot.",
+            description="Create a joint between two components. Snaps geometry_one TO geometry_two (geometry_one moves). 7 motion types: rigid (0 DOF), revolute (1 rotation), slider (1 translation), cylindrical (rotate+slide same axis), ball (3 rotations), planar (2 slides+1 rotation), pin_slot (rotate+slide different axes). Use fusion_get_face_info to find correct faces for geometry references.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -1475,7 +1475,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_drive_joint",
-            description="Drive a joint to specific position values. Set rotation (degrees), slide (cm), pitch/yaw/roll (degrees) depending on joint type. Optionally animate with steps.",
+            description="Drive a joint to specific position values. Units: rotation in degrees, slide in cm, pitch/yaw/roll in degrees. Optionally animate with steps. Verify with fusion_screenshot_multiview after driving.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -2261,7 +2261,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_screenshot_multiview",
-            description="Capture screenshots from multiple standard views in one call. Returns front/right/top/isometric by default. Much better for spatial understanding than a single view.",
+            description="Capture screenshots from 4 standard views (front/right/top/isometric) in one call. STRONGLY RECOMMENDED after any geometry change — multi-view verification catches spatial errors that single views miss. Research shows multi-view feedback dramatically improves CAD modeling accuracy.",
             inputSchema={
                 "type": "object",
                 "properties": {

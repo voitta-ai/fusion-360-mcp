@@ -116,7 +116,7 @@ def _find_joint_by_name(root, name):
         if j.name == name:
             return (j, 'AsBuiltJoint')
     available = [j.name for j in root.joints] + [j.name for j in root.asBuiltJoints]
-    raise ValueError(f'Joint "{name}" not found. Available: {available}')
+    raise ValueError(f'Joint "{name}" not found. Available: {available}. Suggestion: Check fusion_get_tree for current element names — names may include version numbers like ":1"')
 
 def _resolve_joint_geometry(geo_params):
     """
@@ -305,7 +305,7 @@ def _handle_create_joint(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -355,7 +355,7 @@ def _handle_create_as_built_joint(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -407,7 +407,7 @@ def _handle_drive_joint(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -518,7 +518,7 @@ def _handle_set_joint_limits(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -612,7 +612,7 @@ def _handle_modify_joint(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -649,7 +649,7 @@ def _handle_create_joint_origin(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -706,7 +706,7 @@ def _handle_create_rigid_group(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -743,7 +743,7 @@ def _handle_create_motion_link(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -784,7 +784,7 @@ def _handle_delete_joint(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -803,7 +803,7 @@ def _handle_delete_feature(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -878,7 +878,7 @@ def _handle_get_joint_details(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -980,7 +980,7 @@ def _handle_get_grounding_state(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -1025,7 +1025,7 @@ def _handle_delete_occurrence(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -1048,7 +1048,7 @@ def _handle_move_occurrence(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -1101,7 +1101,7 @@ def _handle_rotate_occurrence(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     try:
         occ_path = params['occurrence_path']
@@ -1164,7 +1164,7 @@ def _handle_set_occurrence_transform(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     try:
         occ_path = params['occurrence_path']
@@ -1214,7 +1214,7 @@ def _handle_create_component(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -1246,7 +1246,7 @@ def _handle_copy_occurrence(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
     root = design.rootComponent
 
     try:
@@ -1290,7 +1290,7 @@ def _handle_get_design_type(params):
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     dt = design.designType
     current = 'Parametric' if dt == adsk.fusion.DesignTypes.ParametricDesignType else 'Direct'
@@ -1383,7 +1383,7 @@ def _resolve_element_path(path):
                     return (body, 'BRepBody')
 
             # Enhanced error message with available bodies
-            raise ValueError(f'Body "{body_name}" not found. Available: {available_bodies}')
+            raise ValueError(f'Body "{body_name}" not found. Available: {available_bodies}. Suggestion: Check fusion_get_tree for current element names — names may include version numbers like ":1"')
 
         # Accept both 'occurrences' and 'children' for occurrence paths
         elif part in ['occurrences', 'children']:
@@ -1406,7 +1406,7 @@ def _resolve_element_path(path):
 
             if not found:
                 # Enhanced error message with available occurrences
-                raise ValueError(f'Occurrence "{occ_name}" not found. Available: {available_occs}')
+                raise ValueError(f'Occurrence "{occ_name}" not found. Available: {available_occs}. Suggestion: Check fusion_get_tree for current element names — names may include version numbers like ":1"')
 
             # Skip the i += 1 at the end since we already incremented by 2
             continue
@@ -1977,7 +1977,7 @@ def _handle_create_plane(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
     mode = params.get('mode', 'offset')
@@ -2009,7 +2009,7 @@ def _handle_create_plane(params):
                         ref_plane = p
                         break
                 if ref_plane is None:
-                    raise ValueError(f'Construction plane "{plane_name}" not found. Available: {[p.name for p in root.constructionPlanes]}')
+                    raise ValueError(f'Construction plane "{plane_name}" not found. Available: {[p.name for p in root.constructionPlanes]}. Suggestion: Check fusion_get_tree for current element names — names may include version numbers like ":1"')
             else:
                 # Other path types - try standard resolution
                 ref_plane, _ = _resolve_element_path(ref_plane_path)
@@ -2170,7 +2170,7 @@ def _handle_create_axis(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
     mode = params.get('mode', 'two_points')
@@ -2278,7 +2278,7 @@ def _handle_move_body(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -2334,7 +2334,7 @@ def _handle_rotate_body(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -2405,7 +2405,7 @@ def _handle_mirror_body(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -2476,7 +2476,7 @@ def _handle_split_body(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -2555,7 +2555,7 @@ def _handle_boolean_operation(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -2633,7 +2633,7 @@ def _handle_create_extrude(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -2649,11 +2649,11 @@ def _handle_create_extrude(params):
                 break
 
         if sketch is None:
-            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found', 'suggestion': 'Use fusion_get_tree to find sketch paths. Format: root/sketches/SketchName'}
 
         # Get profiles from sketch
         if sketch.profiles.count == 0:
-            return {'status': 'error', 'message': f'No closed profiles found in sketch "{sketch_name}"'}
+            return {'status': 'error', 'message': f'No closed profiles found in sketch "{sketch_name}"', 'suggestion': 'Ensure the sketch has closed profiles. Use fusion_sketch_add_* to create closed shapes (e.g., rectangles, circles), then retry.'}
 
         # Get profile index (-1 means all profiles)
         profile_index = params.get('profile_index', 0)
@@ -2844,7 +2844,7 @@ def _handle_create_sketch(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -2889,6 +2889,7 @@ def _handle_create_sketch(params):
         return {
             'status': 'error',
             'message': f'Failed to create sketch: {str(e)}',
+            'suggestion': 'Use plane shortcuts XY, XZ, YZ for standard planes, or provide a planar face path. Use fusion_find_faces_by_criteria with surface_type="planar" to find planar faces.',
             'traceback': traceback.format_exc()
         }
 
@@ -2898,7 +2899,7 @@ def _handle_sketch_add_line(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -2914,7 +2915,7 @@ def _handle_sketch_add_line(params):
                 break
 
         if sketch is None:
-            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found', 'suggestion': 'Use fusion_get_tree to find sketch paths. Format: root/sketches/SketchName'}
 
         # Get points
         p1_data = params['point1']
@@ -2951,7 +2952,7 @@ def _handle_sketch_add_circle(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -2967,7 +2968,7 @@ def _handle_sketch_add_circle(params):
                 break
 
         if sketch is None:
-            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found', 'suggestion': 'Use fusion_get_tree to find sketch paths. Format: root/sketches/SketchName'}
 
         mode = params.get('mode', 'center_radius')
 
@@ -3028,7 +3029,7 @@ def _handle_sketch_add_arc(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -3044,7 +3045,7 @@ def _handle_sketch_add_arc(params):
                 break
 
         if sketch is None:
-            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found', 'suggestion': 'Use fusion_get_tree to find sketch paths. Format: root/sketches/SketchName'}
 
         mode = params.get('mode', 'three_points')
 
@@ -3115,7 +3116,7 @@ def _handle_sketch_add_rectangle(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -3131,7 +3132,7 @@ def _handle_sketch_add_rectangle(params):
                 break
 
         if sketch is None:
-            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found', 'suggestion': 'Use fusion_get_tree to find sketch paths. Format: root/sketches/SketchName'}
 
         mode = params.get('mode', 'two_points')
 
@@ -3211,7 +3212,7 @@ def _handle_sketch_add_point(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -3227,7 +3228,7 @@ def _handle_sketch_add_point(params):
                 break
 
         if sketch is None:
-            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found', 'suggestion': 'Use fusion_get_tree to find sketch paths. Format: root/sketches/SketchName'}
 
         # Get point coordinates
         x = params['x']
@@ -3264,7 +3265,7 @@ def _handle_sketch_add_constraint(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -3280,7 +3281,7 @@ def _handle_sketch_add_constraint(params):
                 break
 
         if sketch is None:
-            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found', 'suggestion': 'Use fusion_get_tree to find sketch paths. Format: root/sketches/SketchName'}
 
         constraint_type = params['constraint_type']
 
@@ -3392,7 +3393,7 @@ def _handle_sketch_add_dimension(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -3408,7 +3409,7 @@ def _handle_sketch_add_dimension(params):
                 break
 
         if sketch is None:
-            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found', 'suggestion': 'Use fusion_get_tree to find sketch paths. Format: root/sketches/SketchName'}
 
         dimension_type = params['dimension_type']
         value = params['value']
@@ -3536,7 +3537,7 @@ def _handle_get_features(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -3616,7 +3617,7 @@ def _handle_suppress_feature(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -3685,7 +3686,7 @@ def _handle_edit_feature(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -3821,7 +3822,7 @@ def _handle_set_element_properties(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -3834,13 +3835,13 @@ def _handle_set_element_properties(params):
     opacity = params.get('opacity', None)
 
     if not element_path:
-        return {'status': 'error', 'message': 'No element path provided'}
+        return {'status': 'error', 'message': 'No element path provided', 'suggestion': 'Use fusion_get_tree to get element paths. Format: root/bodies/Body1, root/occurrences/Comp:1'}
 
     # Parse path (e.g., "root/occurrences/OccName/bodies/BodyName")
     parts = element_path.split('/')
 
     if len(parts) == 0 or parts[0] != 'root':
-        return {'status': 'error', 'message': 'Path must start with "root"'}
+        return {'status': 'error', 'message': 'Path must start with "root"', 'suggestion': 'Paths use format: root/bodies/BodyName, root/occurrences/CompName:1, root/sketches/SketchName'}
 
     try:
         current = root
@@ -3862,7 +3863,7 @@ def _handle_set_element_properties(params):
                         element = body
                         break
                 if not element:
-                    return {'status': 'error', 'message': f'Body "{body_name}" not found. Available: {available_bodies}'}
+                    return {'status': 'error', 'message': f'Body "{body_name}" not found. Available: {available_bodies}', 'suggestion': 'Check fusion_get_tree for current element names — names may include version numbers like ":1"'}
                 break
 
             elif part == 'sketches':
@@ -3874,7 +3875,7 @@ def _handle_set_element_properties(params):
                         element = sketch
                         break
                 if not element:
-                    return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+                    return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found', 'suggestion': 'Use fusion_get_tree to find sketch paths. Format: root/sketches/SketchName'}
                 break
 
             elif part == 'meshBodies':
@@ -3901,7 +3902,7 @@ def _handle_set_element_properties(params):
                         found_occ = occ
                         break
                 if not found_occ:
-                    return {'status': 'error', 'message': f'Occurrence "{occ_name}" not found. Available: {available_occs}'}
+                    return {'status': 'error', 'message': f'Occurrence "{occ_name}" not found. Available: {available_occs}', 'suggestion': 'Check fusion_get_tree for current element names — names may include version numbers like ":1"'}
 
                 # If this is the last element, we're targeting the occurrence itself
                 if i + 2 >= len(parts):
@@ -3971,14 +3972,14 @@ def _handle_set_element_properties(params):
                 element.isVisible = is_visible
                 updated.append(f'visibility set to {is_visible}')
             else:
-                return {'status': 'error', 'message': 'Element does not support visibility control'}
+                return {'status': 'error', 'message': 'Element does not support visibility control', 'suggestion': 'Visibility can be set on bodies, sketches, occurrences, and construction geometry'}
 
         if is_grounded is not None:
             if hasattr(element, 'isGrounded'):
                 element.isGrounded = is_grounded
                 updated.append(f'grounded set to {is_grounded}')
             else:
-                return {'status': 'error', 'message': 'Element does not support grounding (only occurrences can be grounded)'}
+                return {'status': 'error', 'message': 'Element does not support grounding (only occurrences can be grounded)', 'suggestion': 'Only occurrences (component instances) can be grounded. Use path like root/occurrences/CompName:1'}
 
         if is_ground_to_parent is not None:
             if hasattr(element, 'isGroundToParent'):
@@ -4002,7 +4003,7 @@ def _handle_set_element_properties(params):
                 return {'status': 'error', 'message': 'Element does not support opacity (only occurrences)'}
 
         if not updated:
-            return {'status': 'error', 'message': 'No properties specified to update'}
+            return {'status': 'error', 'message': 'No properties specified to update', 'suggestion': 'Specify at least one: isVisible, isGrounded, isGroundToParent, isSelectable, or opacity'}
 
         return {
             'status': 'success',
@@ -4023,7 +4024,7 @@ def _handle_get_tree(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -4335,7 +4336,7 @@ def _handle_highlight_geometry(params):
     ui = app.userInterface
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     try:
         # Get paths to highlight
@@ -4391,7 +4392,7 @@ def _handle_measure_all_angles(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     try:
         body_path = params.get('body_path')
@@ -4553,7 +4554,7 @@ def _handle_get_edge_relationships(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     try:
         edge_path = params.get('edge_path')
@@ -4742,7 +4743,7 @@ def _handle_create_revolve(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -4758,10 +4759,10 @@ def _handle_create_revolve(params):
                 break
 
         if sketch is None:
-            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found'}
+            return {'status': 'error', 'message': f'Sketch "{sketch_name}" not found', 'suggestion': 'Use fusion_get_tree to find sketch paths. Format: root/sketches/SketchName'}
 
         if sketch.profiles.count == 0:
-            return {'status': 'error', 'message': f'No closed profiles found in sketch "{sketch_name}"'}
+            return {'status': 'error', 'message': f'No closed profiles found in sketch "{sketch_name}"', 'suggestion': 'Ensure the sketch has closed profiles. Use fusion_sketch_add_* to create closed shapes (e.g., rectangles, circles), then retry.'}
 
         # Get profile
         profile_index = params.get('profile_index', 0)
@@ -4853,7 +4854,7 @@ def _handle_create_fillet(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -4897,7 +4898,7 @@ def _handle_create_chamfer(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -4956,7 +4957,7 @@ def _handle_create_shell(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -5005,7 +5006,7 @@ def _handle_create_hole(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -5070,7 +5071,7 @@ def _handle_create_rectangular_pattern(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -5149,7 +5150,7 @@ def _handle_create_circular_pattern(params):
     design = app.activeProduct
 
     if not design:
-        return {'status': 'error', 'message': 'No active design'}
+        return {'status': 'error', 'message': 'No active design', 'suggestion': 'Open a design document in Fusion 360 first'}
 
     root = design.rootComponent
 
@@ -5439,7 +5440,7 @@ class MainThreadExecutor(adsk.core.CustomEventHandler):
             elif operation == 'screenshot_multiview':
                 result = _handle_screenshot_multiview(event_args.get('params', {}))
             else:
-                result = {'status': 'error', 'error': f'Unknown operation: {operation}'}
+                result = {'status': 'error', 'error': f'Unknown operation: {operation}', 'suggestion': 'Check fusion MCP tool names. Use fusion_get_tree and fusion_screenshot for exploration.'}
 
             _results_queue[operation_id] = {
                 'status': 'success',
