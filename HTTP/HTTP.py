@@ -1028,10 +1028,7 @@ def _handle_get_design_type(params):
         return {'status': 'error', 'message': 'No active design'}
 
     dt = design.designType
-    # Include raw values for debugging enum mapping issues
-    # Official Fusion API: ParametricDesignType=0, DirectDesignType=1
-    # But some environments may differ — report both raw and resolved
-    current = 'Parametric' if dt == 0 else 'Direct'
+    current = 'Parametric' if dt == adsk.fusion.DesignTypes.ParametricDesignType else 'Direct'
     return {
         'status': 'success',
         'data': {
@@ -1054,8 +1051,7 @@ def _handle_set_design_type(params):
         raise ValueError('No active design')
 
     mode = params.get('mode', '').lower()
-    # Use raw int: 0=Parametric, 1=Direct (official Fusion API)
-    previous = 'Parametric' if design.designType == 0 else 'Direct'
+    previous = 'Parametric' if design.designType == adsk.fusion.DesignTypes.ParametricDesignType else 'Direct'
 
     warnings = []
     if mode == 'direct' and previous == 'Parametric':
@@ -1065,14 +1061,14 @@ def _handle_set_design_type(params):
             warnings.append(f'{joint_count} existing joint(s) found. Joints created in Direct mode cannot be migrated back to Parametric.')
 
     if mode == 'parametric':
-        design.designType = 0  # ParametricDesignType
+        design.designType = adsk.fusion.DesignTypes.ParametricDesignType
     elif mode == 'direct':
-        design.designType = 1  # DirectDesignType
+        design.designType = adsk.fusion.DesignTypes.DirectDesignType
     else:
         raise ValueError(f"Invalid mode '{mode}'. Use 'parametric' or 'direct'.")
 
     # Verify the switch actually took effect
-    current = 'Parametric' if design.designType == 0 else 'Direct'
+    current = 'Parametric' if design.designType == adsk.fusion.DesignTypes.ParametricDesignType else 'Direct'
     expected = 'Parametric' if mode == 'parametric' else 'Direct'
     if current != expected:
         warnings.append(f'WARNING: Mode switch did not take effect. Requested "{expected}" but design is still "{current}". '
@@ -3863,7 +3859,7 @@ def _handle_get_tree(params):
     tree = {
         'name': root.name,
         'type': 'root_component',
-        'designType': 'Parametric' if design.designType == 0 else 'Direct',
+        'designType': 'Parametric' if design.designType == adsk.fusion.DesignTypes.ParametricDesignType else 'Direct',
         'component': get_component_data(root),
         'joints': [],
         'asBuiltJoints': [],
