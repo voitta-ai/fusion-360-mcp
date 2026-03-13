@@ -1725,6 +1725,51 @@ async def handle_list_tools() -> list[types.Tool]:
                 },
                 "required": ["joint_one"]
             }
+        ),
+        types.Tool(
+            name="fusion_delete_joint",
+            description="Delete a joint or as-built joint by name. Removes the joint and its motion relationship between components.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "joint_name": {
+                        "type": "string",
+                        "description": "Name of the joint to delete"
+                    }
+                },
+                "required": ["joint_name"]
+            }
+        ),
+        types.Tool(
+            name="fusion_delete_feature",
+            description="Delete a feature, joint, rigid group, or other design element. Use for removing broken joints, unwanted features, or cleaning up the design.",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name of the element to delete (for features, joints, rigid groups)"
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Path to element (e.g., 'root/bodies/Body1'). Alternative to name."
+                    },
+                    "type": {
+                        "type": "string",
+                        "enum": ["feature", "joint", "rigid_group"],
+                        "description": "Type of element to delete (default: feature). Use 'joint' for joints/as-built joints, 'rigid_group' for rigid groups, 'feature' for timeline features.",
+                        "default": "feature"
+                    }
+                }
+            }
+        ),
+        types.Tool(
+            name="fusion_get_design_type",
+            description="Get the current design type (Parametric or Direct). Returns whether timeline and parameters are available.",
+            inputSchema={
+                "type": "object",
+                "properties": {}
+            }
         )
     ]
 
@@ -1797,7 +1842,10 @@ async def handle_call_tool(
         'fusion_modify_joint': 'modify_joint',
         'fusion_create_joint_origin': 'create_joint_origin',
         'fusion_create_rigid_group': 'create_rigid_group',
-        'fusion_create_motion_link': 'create_motion_link'
+        'fusion_create_motion_link': 'create_motion_link',
+        'fusion_delete_joint': 'delete_joint',
+        'fusion_delete_feature': 'delete_feature',
+        'fusion_get_design_type': 'get_design_type'
     }
 
     if name not in operation_map:

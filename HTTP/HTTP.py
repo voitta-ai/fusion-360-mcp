@@ -369,7 +369,7 @@ def _handle_create_as_built_joint(params):
         return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
 
 def _handle_drive_joint(params):
-    """Drive a joint to specific values"""
+    """Drive a joint to specific values with failure detection"""
     app = adsk.core.Application.get()
     design = adsk.fusion.Design.cast(app.activeProduct)
     if not design:
@@ -378,55 +378,58 @@ def _handle_drive_joint(params):
 
     try:
         joint, _ = _find_joint_by_name(root, params['joint_name'])
+
+        # Check for locked/suppressed state before attempting drive
+        if joint.isLocked:
+            return {'status': 'error', 'message': f'Joint "{joint.name}" is locked. Unlock it first with fusion_modify_joint.'}
+        if joint.isSuppressed:
+            return {'status': 'error', 'message': f'Joint "{joint.name}" is suppressed. Unsuppress it first with fusion_modify_joint.'}
+
+        # Check health
+        try:
+            if joint.healthState != 0:  # Not healthy
+                msg = joint.errorOrWarningMessage if joint.errorOrWarningMessage else 'Unknown issue'
+                return {'status': 'error', 'message': f'Joint "{joint.name}" is in error/warning state: {msg}'}
+        except:
+            pass
+
         motion = joint.jointMotion
         jtype = motion.jointType
 
+        if jtype == 0:  # Rigid
+            return {'status': 'error', 'message': 'Cannot drive a rigid joint — it has 0 degrees of freedom'}
+
         animate_steps = params.get('animate_steps', 0)
+
+        # Capture state before driving
+        before_info = _get_joint_motion_info(joint)
+
+        # Helper for animated drive
+        def _animate(get_val, set_val, target):
+            if animate_steps > 0:
+                start = get_val()
+                for i in range(1, animate_steps + 1):
+                    set_val(start + (target - start) * i / animate_steps)
+                    adsk.doEvents()
+            else:
+                set_val(target)
 
         if jtype == 1:  # Revolute
             m = adsk.fusion.RevoluteJointMotion.cast(motion)
             if 'rotation' in params:
-                target = math.radians(params['rotation'])
-                if animate_steps > 0:
-                    start = m.rotationValue
-                    for i in range(1, animate_steps + 1):
-                        m.rotationValue = start + (target - start) * i / animate_steps
-                        adsk.doEvents()
-                else:
-                    m.rotationValue = target
+                _animate(lambda: m.rotationValue, lambda v: setattr(m, 'rotationValue', v), math.radians(params['rotation']))
 
         elif jtype == 2:  # Slider
             m = adsk.fusion.SliderJointMotion.cast(motion)
             if 'slide' in params:
-                target = params['slide']
-                if animate_steps > 0:
-                    start = m.slideValue
-                    for i in range(1, animate_steps + 1):
-                        m.slideValue = start + (target - start) * i / animate_steps
-                        adsk.doEvents()
-                else:
-                    m.slideValue = target
+                _animate(lambda: m.slideValue, lambda v: setattr(m, 'slideValue', v), params['slide'])
 
         elif jtype == 3:  # Cylindrical
             m = adsk.fusion.CylindricalJointMotion.cast(motion)
             if 'rotation' in params:
-                target = math.radians(params['rotation'])
-                if animate_steps > 0:
-                    start = m.rotationValue
-                    for i in range(1, animate_steps + 1):
-                        m.rotationValue = start + (target - start) * i / animate_steps
-                        adsk.doEvents()
-                else:
-                    m.rotationValue = target
+                _animate(lambda: m.rotationValue, lambda v: setattr(m, 'rotationValue', v), math.radians(params['rotation']))
             if 'slide' in params:
-                target = params['slide']
-                if animate_steps > 0:
-                    start = m.slideValue
-                    for i in range(1, animate_steps + 1):
-                        m.slideValue = start + (target - start) * i / animate_steps
-                        adsk.doEvents()
-                else:
-                    m.slideValue = target
+                _animate(lambda: m.slideValue, lambda v: setattr(m, 'slideValue', v), params['slide'])
 
         elif jtype == 4:  # PinSlot
             m = adsk.fusion.PinSlotJointMotion.cast(motion)
@@ -453,17 +456,26 @@ def _handle_drive_joint(params):
             if 'roll' in params:
                 m.rollValue = math.radians(params['roll'])
 
-        elif jtype == 0:  # Rigid
-            return {'status': 'error', 'message': 'Cannot drive a rigid joint'}
+        # Capture state after driving and verify movement
+        after_info = _get_joint_motion_info(joint)
+        moved = before_info != after_info
 
-        motion_info = _get_joint_motion_info(joint)
-        return {
+        warnings = []
+        if not moved:
+            warnings.append('Joint values did not change. Possible causes: joint is constrained by limits, geometry conflicts, or the requested value equals the current value.')
+
+        result = {
             'status': 'success',
             'data': {
                 'name': joint.name,
-                **motion_info
+                'moved': moved,
+                **after_info
             }
         }
+        if warnings:
+            result['data']['warnings'] = warnings
+        return result
+
     except Exception as e:
         return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
 
@@ -733,6 +745,118 @@ def _handle_create_motion_link(params):
     except Exception as e:
         return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
 
+def _handle_delete_joint(params):
+    """Delete a joint or as-built joint by name"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        joint, kind = _find_joint_by_name(root, params['joint_name'])
+        name = joint.name
+        success = joint.deleteMe()
+        if success:
+            return {'status': 'success', 'data': {'deleted': name, 'kind': kind}}
+        else:
+            return {'status': 'error', 'message': f'Failed to delete joint "{name}". It may be referenced by other features.'}
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_delete_feature(params):
+    """Delete a feature, body, joint, rigid group, or other element by path or name"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+    root = design.rootComponent
+
+    try:
+        target_path = params.get('path')
+        target_name = params.get('name')
+        target_type = params.get('type', 'feature')
+
+        element = None
+        element_desc = ''
+
+        if target_type == 'joint':
+            joint, kind = _find_joint_by_name(root, target_name or target_path)
+            element_desc = f'{kind} "{joint.name}"'
+            success = joint.deleteMe()
+            if success:
+                return {'status': 'success', 'data': {'deleted': element_desc}}
+            else:
+                return {'status': 'error', 'message': f'Failed to delete {element_desc}'}
+
+        elif target_type == 'rigid_group':
+            for rg in root.rigidGroups:
+                if rg.name == (target_name or target_path):
+                    element_desc = f'RigidGroup "{rg.name}"'
+                    success = rg.deleteMe()
+                    if success:
+                        return {'status': 'success', 'data': {'deleted': element_desc}}
+                    return {'status': 'error', 'message': f'Failed to delete {element_desc}'}
+            raise ValueError(f'Rigid group "{target_name or target_path}" not found')
+
+        elif target_type == 'feature':
+            # Search by name in features collection
+            fname = target_name or target_path
+            for comp in design.allComponents:
+                for i in range(comp.features.count):
+                    feat = comp.features.item(i)
+                    if feat.name == fname:
+                        element_desc = f'Feature "{feat.name}" in {comp.name}'
+                        # Roll timeline if needed
+                        try:
+                            feat.timelineObject.rollTo(False)
+                        except:
+                            pass
+                        success = feat.deleteMe()
+                        try:
+                            design.timeline.moveToEnd()
+                        except:
+                            pass
+                        if success:
+                            return {'status': 'success', 'data': {'deleted': element_desc}}
+                        return {'status': 'error', 'message': f'Failed to delete {element_desc}'}
+            raise ValueError(f'Feature "{fname}" not found in any component')
+
+        elif target_path:
+            # Resolve by path
+            element, etype = _resolve_element_path(target_path)
+            element_desc = f'{etype} at "{target_path}"'
+            if hasattr(element, 'deleteMe'):
+                success = element.deleteMe()
+                if success:
+                    return {'status': 'success', 'data': {'deleted': element_desc}}
+                return {'status': 'error', 'message': f'Failed to delete {element_desc}'}
+            else:
+                return {'status': 'error', 'message': f'{etype} does not support deletion'}
+        else:
+            return {'status': 'error', 'message': 'Provide either "path" or "name" + "type"'}
+
+    except Exception as e:
+        return {'status': 'error', 'message': str(e), 'traceback': traceback.format_exc()}
+
+def _handle_get_design_type(params):
+    """Get the current design type"""
+    app = adsk.core.Application.get()
+    design = adsk.fusion.Design.cast(app.activeProduct)
+    if not design:
+        return {'status': 'error', 'message': 'No active design'}
+
+    dt = design.designType
+    current = 'Parametric' if dt == adsk.fusion.DesignTypes.ParametricDesignType else 'Direct'
+    return {
+        'status': 'success',
+        'data': {
+            'designType': current,
+            'hasTimeline': current == 'Parametric',
+            'supportsParameters': current == 'Parametric'
+        }
+    }
+
 def _handle_set_design_type(params):
     """Switch between Parametric and Direct design modes"""
     app = adsk.core.Application.get()
@@ -741,6 +865,16 @@ def _handle_set_design_type(params):
         raise ValueError('No active design')
 
     mode = params.get('mode', '').lower()
+    previous = 'Parametric' if design.designType == adsk.fusion.DesignTypes.ParametricDesignType else 'Direct'
+
+    warnings = []
+    if mode == 'direct' and previous == 'Parametric':
+        warnings.append('Switching to Direct mode is ONE-WAY: timeline and feature history will be lost.')
+        # Count existing joints that may be affected
+        joint_count = design.rootComponent.joints.count + design.rootComponent.asBuiltJoints.count
+        if joint_count > 0:
+            warnings.append(f'{joint_count} existing joint(s) found. Joints created in Direct mode cannot be migrated back to Parametric.')
+
     if mode == 'parametric':
         design.designType = adsk.fusion.DesignTypes.ParametricDesignType
     elif mode == 'direct':
@@ -749,7 +883,10 @@ def _handle_set_design_type(params):
         raise ValueError(f"Invalid mode '{mode}'. Use 'parametric' or 'direct'.")
 
     current = 'Parametric' if design.designType == adsk.fusion.DesignTypes.ParametricDesignType else 'Direct'
-    return {'status': 'success', 'designType': current, 'message': f'Design mode set to {current}'}
+    result = {'status': 'success', 'designType': current, 'previous': previous, 'message': f'Design mode set to {current}'}
+    if warnings:
+        result['warnings'] = warnings
+    return result
 
 def _resolve_element_path(path):
     """
@@ -3513,6 +3650,7 @@ def _handle_get_tree(params):
             'type': 'occurrence',
             'isVisible': occ.isVisible,
             'isLightBulbOn': occ.isLightBulbOn,
+            'isGrounded': safe_get(occ, 'isGrounded', None),
             'component': comp_data
         }
 
@@ -3535,6 +3673,35 @@ def _handle_get_tree(params):
         'parameters': []
     }
 
+    # Helper to extract joint geometry origin info
+    def get_joint_geo_info(joint):
+        geo_info = {}
+        try:
+            geo1 = joint.geometryOrOriginOne
+            if geo1 and hasattr(geo1, 'origin') and geo1.origin:
+                geo_info['geometryOneOrigin'] = {'x': geo1.origin.x, 'y': geo1.origin.y, 'z': geo1.origin.z}
+        except:
+            pass
+        try:
+            geo2 = joint.geometryOrOriginTwo
+            if geo2 and hasattr(geo2, 'origin') and geo2.origin:
+                geo_info['geometryTwoOrigin'] = {'x': geo2.origin.x, 'y': geo2.origin.y, 'z': geo2.origin.z}
+        except:
+            pass
+        return geo_info
+
+    def get_joint_health(joint):
+        health_info = {}
+        try:
+            hs = joint.healthState
+            health_map = {0: 'Healthy', 1: 'Warning', 2: 'Error'}
+            health_info['healthState'] = health_map.get(hs, f'Unknown({hs})')
+            if hs != 0:
+                health_info['errorOrWarningMessage'] = safe_get(joint, 'errorOrWarningMessage', '')
+        except:
+            pass
+        return health_info
+
     # Joints
     for joint in root.joints:
         joint_data = {
@@ -3544,6 +3711,8 @@ def _handle_get_tree(params):
             'occurrenceOne': safe_get(joint.occurrenceOne, 'name', None) if joint.occurrenceOne else None,
             'occurrenceTwo': safe_get(joint.occurrenceTwo, 'name', None) if joint.occurrenceTwo else None,
         }
+        joint_data.update(get_joint_health(joint))
+        joint_data.update(get_joint_geo_info(joint))
         try:
             joint_data.update(_get_joint_motion_info(joint))
         except:
@@ -3558,11 +3727,27 @@ def _handle_get_tree(params):
             'occurrenceOne': safe_get(joint.occurrenceOne, 'name', None) if joint.occurrenceOne else None,
             'occurrenceTwo': safe_get(joint.occurrenceTwo, 'name', None) if joint.occurrenceTwo else None,
         }
+        abj_data.update(get_joint_health(joint))
         try:
             abj_data.update(_get_joint_motion_info(joint))
         except:
             pass
         tree['asBuiltJoints'].append(abj_data)
+
+    # Joint Origins
+    tree['jointOrigins'] = []
+    for jo in root.jointOrigins:
+        jo_data = {
+            'name': safe_get(jo, 'name', 'Unnamed'),
+        }
+        try:
+            if jo.geometry and jo.geometry.origin:
+                jo_data['origin'] = {'x': jo.geometry.origin.x, 'y': jo.geometry.origin.y, 'z': jo.geometry.origin.z}
+            if jo.primaryAxisVector:
+                jo_data['zAxis'] = {'x': jo.primaryAxisVector.x, 'y': jo.primaryAxisVector.y, 'z': jo.primaryAxisVector.z}
+        except:
+            pass
+        tree['jointOrigins'].append(jo_data)
 
     # User Parameters (only for parametric designs)
     try:
@@ -4076,6 +4261,12 @@ class MainThreadExecutor(adsk.core.CustomEventHandler):
                 result = _handle_create_rigid_group(event_args.get('params', {}))
             elif operation == 'create_motion_link':
                 result = _handle_create_motion_link(event_args.get('params', {}))
+            elif operation == 'delete_joint':
+                result = _handle_delete_joint(event_args.get('params', {}))
+            elif operation == 'delete_feature':
+                result = _handle_delete_feature(event_args.get('params', {}))
+            elif operation == 'get_design_type':
+                result = _handle_get_design_type(event_args.get('params', {}))
             else:
                 result = {'status': 'error', 'error': f'Unknown operation: {operation}'}
 
