@@ -3829,6 +3829,9 @@ def _handle_set_element_properties(params):
     element_path = params.get('path', '')
     is_visible = params.get('isVisible', None)
     is_grounded = params.get('isGrounded', None)
+    is_ground_to_parent = params.get('isGroundToParent', None)
+    is_selectable = params.get('isSelectable', None)
+    opacity = params.get('opacity', None)
 
     if not element_path:
         return {'status': 'error', 'message': 'No element path provided'}
@@ -3977,6 +3980,27 @@ def _handle_set_element_properties(params):
             else:
                 return {'status': 'error', 'message': 'Element does not support grounding (only occurrences can be grounded)'}
 
+        if is_ground_to_parent is not None:
+            if hasattr(element, 'isGroundToParent'):
+                element.isGroundToParent = is_ground_to_parent
+                updated.append(f'groundToParent set to {is_ground_to_parent}')
+            else:
+                return {'status': 'error', 'message': 'Element does not support isGroundToParent (only occurrences)'}
+
+        if is_selectable is not None:
+            if hasattr(element, 'isSelectable'):
+                element.isSelectable = is_selectable
+                updated.append(f'selectable set to {is_selectable}')
+            else:
+                return {'status': 'error', 'message': 'Element does not support isSelectable'}
+
+        if opacity is not None:
+            if hasattr(element, 'opacity'):
+                element.opacity = float(opacity)
+                updated.append(f'opacity set to {opacity}')
+            else:
+                return {'status': 'error', 'message': 'Element does not support opacity (only occurrences)'}
+
         if not updated:
             return {'status': 'error', 'message': 'No properties specified to update'}
 
@@ -4105,12 +4129,84 @@ def _handle_get_tree(params):
 
         node = {
             'name': occ.name,
+            'fullPathName': safe_get(occ, 'fullPathName', ''),
             'type': 'occurrence',
             'isVisible': occ.isVisible,
             'isLightBulbOn': occ.isLightBulbOn,
             'isGrounded': safe_get(occ, 'isGrounded', None),
+            'isGroundToParent': safe_get(occ, 'isGroundToParent', None),
+            'isSelectable': safe_get(occ, 'isSelectable', None),
+            'isReferencedComponent': safe_get(occ, 'isReferencedComponent', False),
+            'opacity': safe_get(occ, 'opacity', 1.0),
             'component': comp_data
         }
+
+        # Transform (position/orientation in world space)
+        try:
+            transform = occ.transform2
+            if transform:
+                translation = transform.translation
+                node['transform'] = {
+                    'translation': {'x': translation.x, 'y': translation.y, 'z': translation.z},
+                }
+        except:
+            pass
+
+        # Appearance
+        try:
+            appearance = occ.appearance
+            if appearance:
+                node['appearance'] = appearance.name
+        except:
+            pass
+
+        # Physical properties
+        try:
+            phys = occ.physicalProperties
+            if phys:
+                node['physicalProperties'] = {
+                    'mass': phys.mass,
+                    'volume': phys.volume,
+                    'area': phys.area,
+                }
+                com = phys.centerOfMass
+                if com:
+                    node['physicalProperties']['centerOfMass'] = {'x': com.x, 'y': com.y, 'z': com.z}
+        except:
+            pass
+
+        # Bounding box
+        try:
+            bb = occ.boundingBox
+            if bb:
+                node['boundingBox'] = {
+                    'min': {'x': bb.minPoint.x, 'y': bb.minPoint.y, 'z': bb.minPoint.z},
+                    'max': {'x': bb.maxPoint.x, 'y': bb.maxPoint.y, 'z': bb.maxPoint.z}
+                }
+        except:
+            pass
+
+        # Joints referencing this occurrence
+        try:
+            joints = occ.joints
+            if joints and joints.count > 0:
+                node['joints'] = [safe_get(j, 'name', 'Unnamed') for j in joints]
+        except:
+            pass
+
+        try:
+            abj = occ.asBuiltJoints
+            if abj and abj.count > 0:
+                node['asBuiltJoints'] = [safe_get(j, 'name', 'Unnamed') for j in abj]
+        except:
+            pass
+
+        try:
+            rjs = occ.rigidGroups
+            if rjs and rjs.count > 0:
+                node['rigidGroups'] = [safe_get(rg, 'name', 'Unnamed') for rg in rjs]
+        except:
+            pass
 
         # Recurse into children
         if occ.childOccurrences.count > 0:

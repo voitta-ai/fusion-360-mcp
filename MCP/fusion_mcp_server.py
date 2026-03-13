@@ -145,7 +145,7 @@ async def handle_list_tools() -> list[types.Tool]:
         ),
         types.Tool(
             name="fusion_set_element_properties",
-            description="Set properties (visibility, grounding) for any design element. Use paths from fusion_get_tree to identify elements. Examples: 'root/bodies/Body1', 'root/occurrences/Component1', 'root/sketches/Sketch1'.",
+            description="Set properties for any design element: visibility, grounding, groundToParent, selectability, opacity. Use paths from fusion_get_tree to identify elements. Examples: 'root/bodies/Body1', 'root/occurrences/Component1:1'.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -155,11 +155,25 @@ async def handle_list_tools() -> list[types.Tool]:
                     },
                     "isVisible": {
                         "type": "boolean",
-                        "description": "Set visibility (true=visible, false=hidden). Applicable to most elements."
+                        "description": "Set visibility (true=visible, false=hidden). For occurrences controls isLightBulbOn."
                     },
                     "isGrounded": {
                         "type": "boolean",
                         "description": "Set grounding state (true=grounded, false=ungrounded). Only applicable to occurrences."
+                    },
+                    "isGroundToParent": {
+                        "type": "boolean",
+                        "description": "Set whether occurrence is grounded to its parent. Only applicable to occurrences."
+                    },
+                    "isSelectable": {
+                        "type": "boolean",
+                        "description": "Set whether element is selectable in the UI. Only applicable to occurrences."
+                    },
+                    "opacity": {
+                        "type": "number",
+                        "description": "Set opacity (0.0=fully transparent, 1.0=fully opaque). Only applicable to occurrences.",
+                        "minimum": 0.0,
+                        "maximum": 1.0
                     }
                 },
                 "required": ["path"]
